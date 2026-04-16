@@ -1,0 +1,91 @@
+"""Node 1: Page Classifier.
+
+페이지를 로드하고 Persistent Event Listener를 주입한 뒤,
+LLM으로 페이지 타입(PLP/PDP/cart/checkout/기타)을 판단합니다.
+로드타임 발화 이벤트도 수집합니다.
+"""
+
+from __future__ import annotations
+
+import os
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
+from playwright.async_api import async_playwright
+
+from agent.state import GTMAgentState
+from gtm.client import GTMClient
+from playwright.actions import get_page_snapshot
+from playwright.listener import get_captured_events, inject_listener
+
+_llm = ChatAnthropic(model="claude-sonnet-4-6")
+
+_CLASSIFY_SYSTEM = """당신은 웹 페이지를 분석하는 전문가입니다.
+HTML 스냅샷을 보고 페이지 타입을 판단하세요.
+
+다음 중 하나만 응답하세요:
+PLP - 상품 목록 페이지 (카테고리, 검색 결과)
+PDP - 상품 상세 페이지
+cart - 장바구니 페이지
+checkout - 결제/체크아웃 페이지
+home - 메인/홈 페이지
+unknown - 판단 불가
+"""
+
+
+async def page_classifier(state: GTMAgentState) -> GTMAgentState:
+    """Node 1: 페이지 로드, Listener 주입, 페이지 타입 판단."""
+    target_url = state["target_url"]
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False)
+        page = await browser.new_page()
+
+        # Persistent Event Listener 주입 (페이지 이동 후에도 유지)
+        await inject_listener(page)
+
+        # 페이지 이동
+        await page.goto(target_url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(2000)  # SPA 이벤트 대기
+
+        # 로드타임 이벤트 수집
+        load_events = await get_captured_events(page)
+
+        # 페이지 타입 판단
+        snapshot = await get_page_snapshot(page)
+        messages = [
+            SystemMessage(content=_CLASSIFY_SYSTEM),
+            HumanMessage(content=f"URL: {target_url}\n\nHTML:\n{snapshot}"),
+        ]
+        response = await _llm.ainvoke(messages)
+        page_type = response.content.strip().split()[0].lower()
+        valid_types = {"plp", "pdp", "cart", "checkout", "home", "unknown"}
+        if page_type not in valid_types:
+            page_type = "unknown"
+
+        print(f"[PageClassifier] 페이지 타입: {page_type}, 로드 이벤트: {len(load_events)}개")
+
+        # 기존 GTM 컨테이너 설정 조회
+        existing_config: dict = {}
+        try:
+            client = GTMClient()
+            workspace_id = state.get("workspace_id", "")
+            if workspace_id:
+                existing_config = {
+                    "tags": client.list_tags(workspace_id),
+                    "triggers": client.list_triggers(workspace_id),
+                    "variables": client.list_variables(workspace_id),
+                }
+        except Exception as e:
+            print(f"[PageClassifier] GTM 설정 조회 실패 (무시): {e}")
+
+        await browser.close()
+
+    return {
+        **state,
+        "page_type": page_type,
+        "captured_events": load_events,
+        "current_url": target_url,
+        "existing_gtm_config": existing_config,
+        "exploration_log": [f"페이지 로드 완료: {target_url}, 타입: {page_type}"],
+    }

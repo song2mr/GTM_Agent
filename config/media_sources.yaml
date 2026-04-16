@@ -1,0 +1,9 @@
+kakao_pixel:
+  name: "Kakao Pixel"
+  urls:
+    - "https://developers.kakao.com/docs/latest/ko/pixel/devguide"
+
+naver_analytics:
+  name: "Naver Analytics"
+  urls:
+    - "https://naver.github.io/tagtool/"
