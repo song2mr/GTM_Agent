@@ -9,11 +9,11 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from playwright.async_api import Page
 
-from playwright.actions import (
+from browser.actions import (
     ActionResult,
     click,
     close_popup,
@@ -22,7 +22,8 @@ from playwright.actions import (
     navigate,
     scroll,
 )
-from playwright.listener import get_captured_events
+from browser.listener import get_captured_events
+from utils import logger
 
 MAX_RETRIES = 3
 
@@ -54,8 +55,8 @@ action 설명:
 
 
 class LLMNavigator:
-    def __init__(self, model: str = "claude-sonnet-4-6"):
-        self._llm = ChatAnthropic(model=model)
+    def __init__(self, model: str = "gpt-5.1"):
+        self._llm = ChatOpenAI(model=model)
 
     async def decide_next_action(
         self,
@@ -92,9 +93,12 @@ class LLMNavigator:
             if raw.startswith("json"):
                 raw = raw[4:]
         try:
-            return json.loads(raw)
+            decision = json.loads(raw)
         except json.JSONDecodeError:
-            return {"action": "impossible", "reason": f"LLM 응답 파싱 실패: {raw[:200]}"}
+            decision = {"action": "impossible", "reason": f"LLM 응답 파싱 실패: {raw[:200]}"}
+
+        logger.log_llm_decision(target_event, attempt, decision, snapshot, page.url)
+        return decision
 
     async def run_for_event(
         self,
@@ -112,26 +116,36 @@ class LLMNavigator:
             action = decision.get("action", "impossible")
 
             if action == "captured":
-                print(f"[Navigator] {target_event} 이미 캡처됨")
+                logger.info(f"[Navigator] {target_event} 이미 캡처됨")
+                await logger.save_screenshot(page, target_event, attempt, "captured")
                 return "captured"
 
             if action == "impossible":
-                print(f"[Navigator] {target_event} 캡처 불가: {decision.get('reason')}")
+                logger.info(f"[Navigator] {target_event} 캡처 불가: {decision.get('reason', '')[:120]}")
+                await logger.save_screenshot(page, target_event, attempt, "impossible")
                 return "manual_required"
 
             # 팝업 먼저 처리
             await close_popup(page)
 
-            # 액션 실행
+            # 액션 실행 전 스크린샷
+            await logger.save_screenshot(page, target_event, attempt, "before")
+            logger.info(
+                f"[Navigator] {target_event} 시도{attempt} "
+                f"action={action} "
+                f"selector={decision.get('selector', decision.get('url', ''))}"
+            )
+
             result = await self._execute_action(page, decision)
 
             if not result.success:
                 last_error = result.error
-                print(f"[Navigator] 시도 {attempt} 실패: {result.error}")
+                await logger.save_screenshot(page, target_event, attempt, "fail")
+                logger.error(f"[Navigator] 시도{attempt} 실패: {result.error}")
                 continue
 
             # 이벤트 발화 확인
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(2000)
             events = await get_captured_events(page)
             new_events = [
                 e for e in events
@@ -139,12 +153,14 @@ class LLMNavigator:
                 and e.get("data", {}).get("event") == target_event
             ]
             if new_events:
-                print(f"[Navigator] {target_event} 캡처 성공 (시도 {attempt})")
+                await logger.save_screenshot(page, target_event, attempt, "success")
+                logger.info(f"[Navigator] {target_event} 캡처 성공 (시도{attempt})")
                 return "captured"
 
-            last_error = f"액션 실행 성공했으나 이벤트 미발화"
+            last_error = "액션 실행 성공했으나 이벤트 미발화"
+            logger.info(f"[Navigator] {target_event} 시도{attempt}: 액션 성공 but 이벤트 미발화")
 
-        print(f"[Navigator] {target_event} {MAX_RETRIES}회 실패 → Manual로 이관")
+        logger.info(f"[Navigator] {target_event} {MAX_RETRIES}회 실패 → Manual 이관")
         return "manual_required"
 
     async def _execute_action(self, page: Page, decision: dict) -> ActionResult:

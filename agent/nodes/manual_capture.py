@@ -60,6 +60,7 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
     manual_required: list[str] = state.get("manual_required", [])
     manual_capture_results: dict = dict(state.get("manual_capture_results", {}))
     skipped_events: list[str] = list(state.get("skipped_events", []))
+    event_capture_log: list[dict] = list(state.get("event_capture_log", []))
 
     if not manual_required:
         print("[ManualCapture] 수동 캡처 필요 이벤트 없음, 스킵")
@@ -67,6 +68,7 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
             **state,
             "manual_capture_results": manual_capture_results,
             "skipped_events": skipped_events,
+            "event_capture_log": event_capture_log,
         }
 
     for event_name in manual_required:
@@ -90,14 +92,25 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
         print(f"{'='*60}")
 
         while True:
-            choice = input("선택 (A/B/C): ").strip().upper()
+            try:
+                choice = input("선택 (A/B/C): ").strip().upper()
+            except EOFError:
+                # 비대화형 실행(파이프/자동화) 시 표준 스키마가 있으면 B, 없으면 C로 자동 처리
+                if standard_schema:
+                    choice = "B"
+                    print(f"[ManualCapture] 비대화형 모드 — {event_name} 표준 스키마 자동 적용")
+                else:
+                    choice = "C"
+                    print(f"[ManualCapture] 비대화형 모드 — {event_name} 자동 스킵")
 
             if choice == "A":
-                pasted = input("dataLayer JSON을 붙여넣으세요: ").strip()
+                try:
+                    pasted = input("dataLayer JSON을 붙여넣으세요: ").strip()
+                except EOFError:
+                    pasted = ""
                 try:
                     data = json.loads(pasted)
                     if isinstance(data, list):
-                        # window.dataLayer 전체를 붙여넣은 경우
                         matching = [
                             item for item in data
                             if isinstance(item, dict) and item.get("event") == event_name
@@ -107,6 +120,13 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
                         schema = data
                     manual_capture_results[event_name] = schema
                     print(f"[ManualCapture] {event_name} 스키마 저장 완료")
+                    event_capture_log.append({
+                        "event": event_name,
+                        "method": "manual_paste",
+                        "result": "success",
+                        "selector": "",
+                        "notes": "자동화 불가 이벤트 — 사용자가 브라우저 콘솔에서 dataLayer JSON 직접 제공",
+                    })
                     break
                 except json.JSONDecodeError:
                     print("JSON 파싱 실패. 다시 시도하거나 B/C를 선택하세요.")
@@ -115,11 +135,25 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
             elif choice == "B" and standard_schema:
                 manual_capture_results[event_name] = standard_schema
                 print(f"[ManualCapture] {event_name} 표준 스키마 적용")
+                event_capture_log.append({
+                    "event": event_name,
+                    "method": "manual_standard",
+                    "result": "success",
+                    "selector": "",
+                    "notes": "자동화 불가 이벤트 — GA4 표준 스키마로 대체 (실제 데이터 미수집)",
+                })
                 break
 
             elif choice == "C":
                 skipped_events.append(event_name)
                 print(f"[ManualCapture] {event_name} 스킵")
+                event_capture_log.append({
+                    "event": event_name,
+                    "method": "skipped",
+                    "result": "skipped",
+                    "selector": "",
+                    "notes": "사용자 선택으로 이벤트 스킵",
+                })
                 break
 
             else:
@@ -130,4 +164,5 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
         **state,
         "manual_capture_results": manual_capture_results,
         "skipped_events": skipped_events,
+        "event_capture_log": event_capture_log,
     }

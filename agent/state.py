@@ -15,6 +15,15 @@ class GTMAgentState(TypedDict):
     # ── Node 1: Page Classifier ─────────────────────────────────────────────
     page_type: str              # "PLP" | "PDP" | "cart" | "checkout" | "unknown"
     existing_gtm_config: dict   # 현재 GTM 컨테이너 설정 (tags/triggers/variables)
+    datalayer_status: str       # "full" | "partial" | "none"
+    datalayer_events_found: list  # dataLayer에서 발견된 이벤트명 목록
+
+    # ── Node 1.5: Structure Analyzer ─────────────────────────────────────────
+    extraction_method: str      # "datalayer" | "dom" | "custom_js" | "json_ld"
+    dom_selectors: dict         # {field: css_selector} — LLM이 HTML에서 추출
+    selector_validation: dict   # {field: extracted_value} — Playwright로 검증된 값
+    json_ld_data: dict          # JSON-LD 구조화 데이터 (있을 경우)
+    click_triggers: dict        # {event_name: css_selector} — 클릭 트리거 대상
 
     # ── Node 2: Journey Planner ─────────────────────────────────────────────
     exploration_queue: list     # 탐색할 이벤트 목록 (순서 있음)
@@ -43,3 +52,13 @@ class GTMAgentState(TypedDict):
     created_tags: list
     publish_result: dict
     error: str | None
+
+    # ── Node 3-4: 이벤트별 처리 내역 (Reporter용 구조화 로그) ────────────────
+    # 각 항목: {event, method, result, selector, notes}
+    # method 우선순위: datalayer > click_trigger_datalayer > click_trigger_dom
+    #                > navigator_datalayer > dom_fallback > datalayer_dom_supplement
+    #                > manual_standard > manual_paste > skipped
+    event_capture_log: list
+
+    # ── Node 8: Reporter ─────────────────────────────────────────────────────
+    report_path: str | None  # 생성된 보고서 파일 경로

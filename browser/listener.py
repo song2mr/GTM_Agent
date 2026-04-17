@@ -64,3 +64,76 @@ async def get_captured_events(page: Page) -> list[dict]:
 async def clear_captured_events(page: Page) -> None:
     """캡처된 이벤트 버퍼를 초기화합니다."""
     await page.evaluate("window.__gtm_captured = []")
+
+
+_DIAGNOSE_SCRIPT = """
+() => {
+    const result = {
+        has_datalayer: Boolean(window.dataLayer),
+        has_gtm: Boolean(window.google_tag_manager),
+        events: [],
+        has_ecommerce: false,
+        ecommerce_fields: [],
+        json_ld: []
+    };
+
+    // dataLayer 이벤트 수집
+    if (window.dataLayer && Array.isArray(window.dataLayer)) {
+        for (const item of window.dataLayer) {
+            if (item && typeof item === 'object' && item.event) {
+                result.events.push(item.event);
+                if (item.ecommerce) {
+                    result.has_ecommerce = true;
+                    result.ecommerce_fields = Object.keys(item.ecommerce);
+                }
+            }
+        }
+    }
+
+    // JSON-LD 구조화 데이터 수집
+    const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+    for (const s of ldScripts) {
+        try {
+            const parsed = JSON.parse(s.textContent);
+            result.json_ld.push(parsed);
+        } catch {}
+    }
+
+    return result;
+}
+"""
+
+
+async def diagnose_datalayer(page: Page) -> dict:
+    """dataLayer 상태를 진단합니다.
+
+    Returns:
+        {
+            "has_datalayer": bool,
+            "has_gtm": bool,
+            "events": ["page_view", ...],
+            "has_ecommerce": bool,
+            "ecommerce_fields": ["items", "currency", ...],
+            "json_ld": [{ "@type": "Product", ... }, ...],
+            "status": "full" | "partial" | "none"
+        }
+    """
+    result = await page.evaluate(_DIAGNOSE_SCRIPT)
+
+    ecommerce_events = {
+        "view_item_list", "view_item", "select_item",
+        "add_to_cart", "remove_from_cart", "view_cart",
+        "begin_checkout", "add_shipping_info", "add_payment_info",
+        "purchase", "refund",
+    }
+    found = set(result.get("events", []))
+    ecom_found = found & ecommerce_events
+
+    if result.get("has_ecommerce") and len(ecom_found) >= 3:
+        result["status"] = "full"
+    elif result.get("has_datalayer") and (ecom_found or result.get("has_ecommerce")):
+        result["status"] = "partial"
+    else:
+        result["status"] = "none"
+
+    return result

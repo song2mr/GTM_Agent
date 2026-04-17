@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from agent.state import GTMAgentState
 
-_llm = ChatAnthropic(model="claude-sonnet-4-6")
+_llm = ChatOpenAI(model="gpt-5.1")
 
 # 자동화 불가 이벤트 (Manual Capture Gateway로 전환)
 MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}

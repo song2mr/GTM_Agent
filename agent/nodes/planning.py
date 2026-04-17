@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import json
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from agent.state import GTMAgentState
 from docs.fetcher import fetch_docs_for_media
 
-_llm = ChatAnthropic(model="claude-sonnet-4-6")
+_llm = ChatOpenAI(model="gpt-5.1")
 
-_PLANNING_SYSTEM = """당신은 GTM(Google Tag Manager) 전문가입니다.
+_PLANNING_SYSTEM_DL = """당신은 GTM(Google Tag Manager) 전문가입니다.
 수집된 dataLayer 이벤트를 분석하고 GTM Variable/Trigger/Tag 설계안을 생성하세요.
 
 다음 JSON 형식으로만 응답하세요:
@@ -68,6 +68,85 @@ _PLANNING_SYSTEM = """당신은 GTM(Google Tag Manager) 전문가입니다.
 GA4 Measurement ID 변수명: {{GA4 Measurement ID}} (기존 컨테이너 확인 후 있으면 재사용)
 """
 
+_PLANNING_SYSTEM_DOM = """당신은 GTM(Google Tag Manager) 전문가입니다.
+이 사이트는 dataLayer가 없거나 불완전하므로, DOM에서 직접 데이터를 추출하는 GTM 설계가 필요합니다.
+
+Variable 타입 가이드:
+- DOM Element Variable (type "d"): CSS selector로 페이지 내 요소의 텍스트/속성 추출
+- Custom JavaScript Variable (type "jsm"): JS 함수로 값을 가공해서 반환
+- Auto-Event Variable (type "aev"): 클릭된 요소의 속성 자동 수집
+
+Trigger 타입 가이드:
+- Click Trigger (type "click"): 특정 CSS selector 클릭 시 발동
+- Element Visibility (type "elementVisibility"): 특정 요소가 화면에 보일 때 발동
+- Page View (type "pageview"): 페이지 로드 시
+
+다음 JSON 형식으로만 응답하세요:
+{
+  "variables": [
+    {
+      "name": "DOM - item_name",
+      "type": "d",
+      "parameters": [
+        {"type": "template", "key": "elementId", "value": "CSS_SELECTOR"},
+        {"type": "integer", "key": "selectorType", "value": "CSS"}
+      ]
+    },
+    {
+      "name": "CJS - item_price",
+      "type": "jsm",
+      "parameters": [
+        {
+          "type": "template",
+          "key": "javascript",
+          "value": "function(){var el=document.querySelector('SELECTOR');if(!el)return '';var t=el.textContent;return parseFloat(t.replace(/[^0-9.]/g,''))}"
+        }
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "name": "Click - Add to Cart",
+      "type": "click",
+      "filters": [
+        {
+          "type": "cssSelector",
+          "parameter": [
+            {"type": "template", "key": "arg0", "value": "{{Click Element}}"},
+            {"type": "template", "key": "arg1", "value": "CSS_SELECTOR_FOR_BUTTON"}
+          ]
+        }
+      ]
+    }
+  ],
+  "tags": [
+    {
+      "name": "GA4 - add_to_cart",
+      "type": "gaawe",
+      "parameters": [
+        {"type": "template", "key": "eventName", "value": "add_to_cart"},
+        {"type": "template", "key": "measurementId", "value": "{{GA4 Measurement ID}}"}
+      ],
+      "event_parameters": [
+        {"key": "items", "value": "{{CJS - ecommerce_items}}"}
+      ],
+      "firing_trigger_names": ["Click - Add to Cart"]
+    }
+  ]
+}
+
+네이밍 컨벤션:
+- DOM Variable: "DOM - {필드명}"
+- Custom JS Variable: "CJS - {필드명}"
+- Click Trigger: "Click - {설명}" (한국어 가능)
+- Tag: "GA4 - {event_name}"
+
+중요:
+- 가격은 반드시 CJS로 숫자만 추출하는 함수 작성
+- items 배열을 구성하는 CJS 변수를 별도로 만들 것
+- Click Trigger의 CSS selector는 반드시 검증된 selector 사용
+"""
+
 
 async def planning(state: GTMAgentState) -> GTMAgentState:
     """Node 5: GTM 설계안 생성 + HITL."""
@@ -76,6 +155,11 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
     manual_capture_results = state.get("manual_capture_results", {})
     existing_config = state.get("existing_gtm_config", {})
     hitl_feedback = state.get("hitl_feedback", "")
+
+    extraction_method = state.get("extraction_method", "datalayer")
+    dom_selectors = state.get("dom_selectors", {})
+    click_triggers = state.get("click_triggers", {})
+    selector_validation = state.get("selector_validation", {})
 
     # 전체 이벤트 풀 구성
     all_events = list(captured_events)
@@ -91,10 +175,17 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         if doc_fetch_failed:
             print(f"[Planning] {tag_type} 문서 fetch 실패 — 내장 지식으로 진행")
 
+    # DOM 구조 정보 컨텍스트 구성
+    dom_context = ""
+    if extraction_method != "datalayer" and (dom_selectors or click_triggers):
+        dom_context = _build_dom_context(dom_selectors, click_triggers, selector_validation)
+        print(f"[Planning] DOM 기반 설계 모드 (method={extraction_method})")
+
     # 설계안 생성 루프 (HITL 피드백 반영)
     while True:
         plan = await _generate_plan(
-            tag_type, all_events, existing_config, doc_context, hitl_feedback
+            tag_type, all_events, existing_config, doc_context,
+            hitl_feedback, extraction_method, dom_context,
         )
 
         # 설계안 출력
@@ -103,7 +194,11 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         print("="*60)
 
-        approval = input("\n이 설계안으로 GTM을 생성하시겠습니까? (y/n): ").strip().lower()
+        try:
+            approval = input("\n이 설계안으로 GTM을 생성하시겠습니까? (y/n): ").strip().lower()
+        except EOFError:
+            approval = "y"
+            print("[Planning] 비대화형 모드 — 설계안 자동 승인")
 
         if approval == "y":
             return {
@@ -115,8 +210,38 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
                 "hitl_feedback": "",
             }
         else:
-            hitl_feedback = input("수정 요청 사항을 입력하세요: ").strip()
+            try:
+                hitl_feedback = input("수정 요청 사항을 입력하세요: ").strip()
+            except EOFError:
+                hitl_feedback = ""
             print("[Planning] 피드백 반영하여 재설계합니다...")
+
+
+def _build_dom_context(
+    dom_selectors: dict,
+    click_triggers: dict,
+    selector_validation: dict,
+) -> str:
+    """DOM 분석 결과를 LLM 컨텍스트 문자열로 구성합니다."""
+    parts: list[str] = [
+        "=== DOM 구조 분석 결과 (dataLayer 미사용) ===",
+        "\n검증된 CSS Selector:",
+    ]
+    for field, spec in dom_selectors.items():
+        selector = spec.get("selector", spec) if isinstance(spec, dict) else spec
+        value = selector_validation.get(field, "(미검증)")
+        parts.append(f"  - {field}: {selector} → 실제 값: {str(value)[:100]}")
+
+    if click_triggers:
+        parts.append("\n클릭 트리거 대상:")
+        for event_name, sel in click_triggers.items():
+            parts.append(f"  - {event_name}: {sel}")
+
+    parts.append(
+        "\n이 정보를 기반으로 DOM Element / Custom JS Variable과 "
+        "Click Trigger를 사용하는 GTM 설계안을 생성하세요."
+    )
+    return "\n".join(parts)
 
 
 async def _generate_plan(
@@ -125,6 +250,8 @@ async def _generate_plan(
     existing_config: dict,
     doc_context: str,
     feedback: str,
+    extraction_method: str = "datalayer",
+    dom_context: str = "",
 ) -> dict:
     """LLM으로 GTM 설계안을 생성합니다."""
     events_summary = json.dumps(
@@ -133,10 +260,15 @@ async def _generate_plan(
         indent=2,
     )
 
+    system_prompt = _PLANNING_SYSTEM_DOM if extraction_method != "datalayer" else _PLANNING_SYSTEM_DL
+
     content_parts = [
         f"태그 유형: {tag_type}",
+        f"데이터 추출 방식: {extraction_method}",
         f"\n수집된 이벤트:\n{events_summary}",
     ]
+    if dom_context:
+        content_parts.append(f"\n{dom_context}")
     if existing_config:
         content_parts.append(
             f"\n기존 GTM 설정 (재사용 가능):\n{json.dumps(existing_config, ensure_ascii=False)[:3000]}"
@@ -147,7 +279,7 @@ async def _generate_plan(
         content_parts.append(f"\n이전 설계안에 대한 피드백:\n{feedback}")
 
     messages = [
-        SystemMessage(content=_PLANNING_SYSTEM),
+        SystemMessage(content=system_prompt),
         HumanMessage(content="\n".join(content_parts)),
     ]
     response = await _llm.ainvoke(messages)

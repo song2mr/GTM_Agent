@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import os
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from playwright.async_api import async_playwright
 
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
-from playwright.actions import get_page_snapshot
-from playwright.listener import get_captured_events, inject_listener
+from browser.actions import get_page_snapshot
+from browser.listener import diagnose_datalayer, get_captured_events, inject_listener
 
-_llm = ChatAnthropic(model="claude-sonnet-4-6")
+_llm = ChatOpenAI(model="gpt-5.1")
 
 _CLASSIFY_SYSTEM = """당신은 웹 페이지를 분석하는 전문가입니다.
 HTML 스냅샷을 보고 페이지 타입을 판단하세요.
@@ -50,6 +50,17 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
 
         # 로드타임 이벤트 수집
         load_events = await get_captured_events(page)
+
+        # dataLayer 상태 진단
+        dl_diagnosis = await diagnose_datalayer(page)
+        datalayer_status = dl_diagnosis.get("status", "none")
+        datalayer_events_found = dl_diagnosis.get("events", [])
+        json_ld_data = dl_diagnosis.get("json_ld", [])
+        print(
+            f"[PageClassifier] dataLayer 상태: {datalayer_status}, "
+            f"이벤트: {datalayer_events_found}, "
+            f"JSON-LD: {len(json_ld_data)}개"
+        )
 
         # 페이지 타입 판단
         snapshot = await get_page_snapshot(page)
@@ -87,5 +98,8 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
         "captured_events": load_events,
         "current_url": target_url,
         "existing_gtm_config": existing_config,
-        "exploration_log": [f"페이지 로드 완료: {target_url}, 타입: {page_type}"],
+        "datalayer_status": datalayer_status,
+        "datalayer_events_found": datalayer_events_found,
+        "json_ld_data": json_ld_data,
+        "exploration_log": [f"페이지 로드 완료: {target_url}, 타입: {page_type}, DL: {datalayer_status}"],
     }

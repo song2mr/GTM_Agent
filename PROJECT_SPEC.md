@@ -310,7 +310,7 @@ class GTMAgentState(TypedDict):
 ## 9. 환경 변수 (.env)
 
 ```env
-ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
 GTM_ACCOUNT_ID=
 GTM_CONTAINER_ID=
 GTM_WORKSPACE_ID=        # 신규 workspace 생성 후 자동 기입 (선택)

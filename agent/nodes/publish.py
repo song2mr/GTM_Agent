@@ -40,10 +40,7 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
 
         # Publish
         publish_result = client.publish_version(version_path)
-        print(f"[Publish] Publish 완료: {publish_result}")
-
-        # 결과 리포트
-        _print_report(state, version_id, publish_result)
+        print(f"[Publish] Publish 완료: version={version_id}")
 
         return {
             **state,
@@ -57,20 +54,3 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
         return {**state, "error": error_msg}
 
 
-def _print_report(state: GTMAgentState, version_id: str, publish_result: dict) -> None:
-    """최종 결과 리포트를 출력합니다."""
-    print("\n" + "="*60)
-    print("GTM AI Agent — 실행 완료 리포트")
-    print("="*60)
-    print(f"대상 URL: {state.get('target_url')}")
-    print(f"태그 유형: {state.get('tag_type')}")
-    print(f"페이지 타입: {state.get('page_type')}")
-    print(f"캡처된 이벤트: {len(state.get('captured_events', []))}개")
-    print(f"수동 캡처: {list(state.get('manual_capture_results', {}).keys())}")
-    print(f"스킵된 이벤트: {state.get('skipped_events', [])}")
-    print(f"생성된 Variable: {len(state.get('created_variables', []))}개")
-    print(f"생성된 Trigger: {len(state.get('created_triggers', []))}개")
-    print(f"생성된 Tag: {len(state.get('created_tags', []))}개")
-    print(f"Workspace ID: {state.get('workspace_id')}")
-    print(f"Published Version: {version_id}")
-    print("="*60)

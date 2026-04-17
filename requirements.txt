@@ -1,6 +1,6 @@
 langgraph>=0.2
-langchain-anthropic>=0.3
 langchain-core>=0.3
+langchain-openai>=0.2
 playwright>=1.44
 google-api-python-client>=2.0
 google-auth-oauthlib>=1.0
