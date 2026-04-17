@@ -28,11 +28,11 @@ PAGE_TYPE_FIELDS: dict[str, list[str]] = {
     "pdp": [
         "item_name", "item_id", "price", "currency",
         "item_brand", "item_category", "item_variant",
-        "quantity_selector", "add_to_cart_button",
+        "quantity_selector", "add_to_cart_button", "wishlist_button",
     ],
     "plp": [
         "item_name", "item_id", "price",
-        "item_list_name", "product_card",
+        "item_list_name", "product_card", "wishlist_button",
     ],
     "cart": [
         "item_name", "item_id", "price", "quantity",
@@ -49,6 +49,7 @@ CLICK_TRIGGER_FIELDS: dict[str, str] = {
     "add_to_cart": "add_to_cart_button",
     "begin_checkout": "checkout_button",
     "remove_from_cart": "remove_button",
+    "add_to_wishlist": "wishlist_button",
 }
 
 _ANALYZER_SYSTEM = """당신은 웹 페이지 HTML 구조를 분석하는 전문가입니다.
@@ -296,6 +297,20 @@ async def _find_click_triggers(page: Page, page_type: str) -> dict:
         "remove_from_cart": [
             "button[class*='remove']", "button[class*='delete']",
             ".btn-remove", "button:has-text('삭제')",
+        ],
+        # 한국 쇼핑몰 찜/위시리스트 버튼 패턴
+        "add_to_wishlist": [
+            "button[class*='wish']", "button[class*='Wish']",
+            "button[class*='like']", "button[class*='Like']",
+            "button[class*='heart']", "button[class*='Heart']",
+            "button[class*='favorite']", "button[class*='Favorite']",
+            "button[class*='bookmark']",
+            "[class*='wish-btn']", "[class*='btn-wish']",
+            "[class*='btn-like']", "[class*='btn-heart']",
+            "button:has-text('찜')", "button:has-text('찜하기')",
+            "button:has-text('관심상품')", "button:has-text('좋아요')",
+            "a:has-text('찜하기')", "[data-action*='wish']",
+            "[aria-label*='찜']", "[title*='찜']",
         ],
     }
 
