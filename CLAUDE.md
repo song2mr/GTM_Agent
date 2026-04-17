@@ -96,6 +96,20 @@ Navigator가 현재 페이지에서 무엇을 해야 하는지 판단할 때 이
 - LLM에 현재 URL + 페이지 타입을 함께 전달해 탐색 순서를 정확히 결정
 - LLM 파싱 실패 시 `_default_queue(page_type, user_request)`로 폴백하며 커스텀 이벤트도 반영
 
+### 태그 유형별 문서 처리 방식
+
+| 태그 유형 | 지식 출처 | 비고 |
+|----------|----------|------|
+| GA4 | LLM 내장 지식 | Phase 1 한정 |
+| Naver Analytics | 실시간 문서 fetch | `config/media_sources.yaml` |
+| Kakao Pixel | 실시간 문서 fetch | `config/media_sources.yaml` |
+| Criteo 등 | 실시간 문서 fetch | 향후 추가 |
+
+> **TODO**: GA4만 LLM 내장 지식을 쓰는 것은 일관성이 없다.
+> 구분 기준은 "vendor 종류"가 아니라 "LLM 지식의 신뢰도"여야 한다.
+> GA4도 GTM 공식 문서를 fetch해서 모든 vendor를 동일하게 처리하도록 통일 예정.
+> (`config/media_sources.yaml`에 GA4 URL 추가 + `planning.py` 분기 제거)
+
 ### GTM API 사용 원칙
 
 - Workspace는 항상 신규 생성 후 작업한다
