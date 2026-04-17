@@ -41,10 +41,11 @@ class GTMVariable:
 @dataclass
 class GTMTrigger:
     name: str
-    type: str           # "pageview", "customEvent", "click" 등
+    type: str           # "pageview", "customEvent", "click", "elementVisibility" 등
     custom_event_filter: list = field(default_factory=list)
     filter_: list = field(default_factory=list)
     auto_event_filter: list = field(default_factory=list)
+    parameter: list = field(default_factory=list)   # elementVisibility 등 body-level 파라미터
     trigger_id: str | None = None
 
     def to_api_body(self, workspace_path: str) -> dict:
@@ -58,6 +59,8 @@ class GTMTrigger:
             body["filter"] = self.filter_
         if self.auto_event_filter:
             body["autoEventFilter"] = self.auto_event_filter
+        if self.parameter:
+            body["parameter"] = self.parameter
         return body
 
 

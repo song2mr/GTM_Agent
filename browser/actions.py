@@ -75,8 +75,12 @@ async def form_fill(
         return ActionResult(success=False, error=f"폼 입력 실패: {e}")
 
 
-async def get_page_snapshot(page: Page, max_chars: int = 8000) -> str:
-    """현재 페이지의 HTML 스냅샷을 반환합니다 (LLM 입력용으로 축약)."""
+async def get_page_snapshot(page: Page, max_chars: int = 15000) -> str:
+    """현재 페이지의 HTML 스냅샷을 반환합니다 (LLM 입력용으로 축약).
+
+    상품 목록 / 상품 상세 링크가 페이지 중간 이후에 등장하는 경우를 위해
+    max_chars를 넉넉히 잡습니다.
+    """
     try:
         content = await page.content()
         # 스크립트·스타일 제거 후 축약

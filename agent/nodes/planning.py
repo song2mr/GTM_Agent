@@ -53,7 +53,12 @@ _PLANNING_SYSTEM_DL = """당신은 GTM(Google Tag Manager) 전문가입니다.
       "type": "gaawe",
       "parameters": [
         {"type": "template", "key": "eventName", "value": "view_item"},
-        {"type": "template", "key": "measurementId", "value": "{{GA4 Measurement ID}}"}
+        {"type": "template", "key": "measurementIdOverride", "value": "{{GA4 Measurement ID}}"}
+      ],
+      "event_parameters": [
+        {"key": "currency", "value": "KRW"},
+        {"key": "value", "value": "{{DLV - ecommerce.value}}"},
+        {"key": "items", "value": "{{DLV - ecommerce.items}}"}
       ],
       "firing_trigger_names": ["CE - view_item"]
     }
@@ -78,8 +83,11 @@ Variable 타입 가이드:
 
 Trigger 타입 가이드:
 - Click Trigger (type "click"): 특정 CSS selector 클릭 시 발동
+  → filter 조건에 cssSelector 타입 사용, {{Click Element}} 변수로 클릭된 요소 참조
 - Element Visibility (type "elementVisibility"): 특정 요소가 화면에 보일 때 발동
+  → parameter 배열에 visibilitySelector(CSS selector)와 visibilityIdToCSSAuto 설정
 - Page View (type "pageview"): 페이지 로드 시
+  → URL 경로 기반 filter 조건으로 특정 페이지만 발동 가능
 
 다음 JSON 형식으로만 응답하세요:
 {
@@ -89,7 +97,8 @@ Trigger 타입 가이드:
       "type": "d",
       "parameters": [
         {"type": "template", "key": "elementId", "value": "CSS_SELECTOR"},
-        {"type": "integer", "key": "selectorType", "value": "CSS"}
+        {"type": "integer", "key": "selectorType", "value": "1"},
+        {"type": "template", "key": "attributeName", "value": "text"}
       ]
     },
     {
@@ -99,21 +108,42 @@ Trigger 타입 가이드:
         {
           "type": "template",
           "key": "javascript",
-          "value": "function(){var el=document.querySelector('SELECTOR');if(!el)return '';var t=el.textContent;return parseFloat(t.replace(/[^0-9.]/g,''))}"
+          "value": "function(){var el=document.querySelector('SELECTOR');if(!el)return 0;var t=el.textContent||el.getAttribute('content')||'';return parseFloat(t.replace(/[^0-9.]/g,''))||0;}"
         }
       ]
     }
   ],
   "triggers": [
     {
-      "name": "Click - Add to Cart",
+      "name": "Click - 장바구니 담기",
       "type": "click",
-      "filters": [
+      "filter": [
         {
           "type": "cssSelector",
           "parameter": [
             {"type": "template", "key": "arg0", "value": "{{Click Element}}"},
             {"type": "template", "key": "arg1", "value": "CSS_SELECTOR_FOR_BUTTON"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Element Visibility - 상품 노출",
+      "type": "elementVisibility",
+      "parameter": [
+        {"type": "template", "key": "visibilitySelector", "value": "CSS_SELECTOR_FOR_ITEM"},
+        {"type": "boolean", "key": "visibilityIdToCSSAuto", "value": "true"}
+      ]
+    },
+    {
+      "name": "Pageview - 상품 목록 페이지",
+      "type": "pageview",
+      "filter": [
+        {
+          "type": "contains",
+          "parameter": [
+            {"type": "template", "key": "arg0", "value": "{{Page Path}}"},
+            {"type": "template", "key": "arg1", "value": "/product/list"}
           ]
         }
       ]
@@ -125,12 +155,13 @@ Trigger 타입 가이드:
       "type": "gaawe",
       "parameters": [
         {"type": "template", "key": "eventName", "value": "add_to_cart"},
-        {"type": "template", "key": "measurementId", "value": "{{GA4 Measurement ID}}"}
+        {"type": "template", "key": "measurementIdOverride", "value": "{{GA4 Measurement ID}}"}
       ],
       "event_parameters": [
+        {"key": "currency", "value": "KRW"},
         {"key": "items", "value": "{{CJS - ecommerce_items}}"}
       ],
-      "firing_trigger_names": ["Click - Add to Cart"]
+      "firing_trigger_names": ["Click - 장바구니 담기"]
     }
   ]
 }
@@ -181,11 +212,14 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         dom_context = _build_dom_context(dom_selectors, click_triggers, selector_validation)
         print(f"[Planning] DOM 기반 설계 모드 (method={extraction_method})")
 
+    user_request = state.get("user_request", "")
+
     # 설계안 생성 루프 (HITL 피드백 반영)
     while True:
         plan = await _generate_plan(
             tag_type, all_events, existing_config, doc_context,
             hitl_feedback, extraction_method, dom_context,
+            user_request=user_request,
         )
 
         # 설계안 출력
@@ -252,6 +286,7 @@ async def _generate_plan(
     feedback: str,
     extraction_method: str = "datalayer",
     dom_context: str = "",
+    user_request: str = "",
 ) -> dict:
     """LLM으로 GTM 설계안을 생성합니다."""
     events_summary = json.dumps(
@@ -265,6 +300,10 @@ async def _generate_plan(
     content_parts = [
         f"태그 유형: {tag_type}",
         f"데이터 추출 방식: {extraction_method}",
+    ]
+    if user_request:
+        content_parts.append(f"사용자 요청 (반드시 이 이벤트들을 모두 설계에 포함할 것):\n{user_request}")
+    content_parts += [
         f"\n수집된 이벤트:\n{events_summary}",
     ]
     if dom_context:
@@ -285,13 +324,31 @@ async def _generate_plan(
     response = await _llm.ainvoke(messages)
     raw = response.content.strip()
 
+    # 1순위: 마크다운 코드 블록에서 JSON 추출
     if "```" in raw:
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+        parts = raw.split("```")
+        for part in parts[1::2]:  # 홀수 인덱스 = 코드 블록 내부
+            if part.startswith("json"):
+                part = part[4:]
+            try:
+                return json.loads(part.strip())
+            except json.JSONDecodeError:
+                continue
 
+    # 2순위: 직접 파싱 (코드 블록 없는 JSON)
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        print(f"[Planning] JSON 파싱 실패: {raw[:300]}")
-        return {"variables": [], "triggers": [], "tags": []}
+        pass
+
+    # 3순위: 최외곽 { ... } 추출 시도 (LLM이 앞뒤에 설명 텍스트를 붙인 경우)
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    print(f"[Planning] JSON 파싱 실패: {raw[:300]}")
+    return {"variables": [], "triggers": [], "tags": []}

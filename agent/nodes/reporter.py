@@ -279,7 +279,23 @@ def _section_gtm_resources(state: GTMAgentState) -> str:
 
 
 def _section_publish(state: GTMAgentState) -> str:
+    publish_warning = state.get("publish_warning")
     publish_result = state.get("publish_result", {})
+
+    if publish_warning:
+        workspace_id = state.get("workspace_id", "-")
+        return f"""## 5. Publish 결과
+
+⚠️ **Publish 권한 부족 — 수동 Publish 필요**
+
+GTM 리소스(Variable/Trigger/Tag) 생성은 완료되었습니다.
+Workspace `{workspace_id}`에 접근해 GTM UI에서 직접 Publish하세요.
+
+**원인**: OAuth 토큰에 `tagmanager.publish` 스코프가 없습니다.
+**해결 방법**:
+1. Google Cloud Console → OAuth 동의 화면 → `tagmanager.publish` 스코프 추가
+2. `credentials/token.json` 삭제 후 `python gtm/auth.py` 재실행"""
+
     if not publish_result:
         return "## 5. Publish 결과\n\nPublish가 실행되지 않았습니다."
 

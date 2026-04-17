@@ -32,6 +32,11 @@ def get_credentials() -> Credentials:
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
 
+    # 저장된 토큰에 필요한 스코프가 누락된 경우 재인증 강제
+    if creds and creds.scopes and not all(s in creds.scopes for s in SCOPES):
+        print(f"[Auth] 토큰 스코프 부족 — 재인증이 필요합니다. (보유: {creds.scopes})")
+        creds = None
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -45,7 +50,8 @@ def get_credentials() -> Credentials:
             flow = InstalledAppFlow.from_client_secrets_file(
                 str(CLIENT_SECRET_PATH), SCOPES
             )
-            creds = flow.run_local_server(port=0)
+            # prompt="consent"로 강제 재동의 — 스코프 변경 시 기존 캐시 무시
+            creds = flow.run_local_server(port=0, prompt="consent")
 
         TOKEN_PATH.write_text(creds.to_json())
         print(f"토큰 저장 완료: {TOKEN_PATH}")

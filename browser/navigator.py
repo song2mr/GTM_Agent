@@ -34,11 +34,18 @@ MAX_RETRIES = 3
 EVENT_CAPTURE_GUIDE: dict[str, str] = {
     "view_item": (
         "상품 상세 페이지(PDP)에서 자동 발화됩니다. "
-        "현재 홈/목록 페이지라면 상품 이미지나 상품명을 클릭해서 상품 상세 페이지로 이동하세요."
+        "현재 홈/목록 페이지라면 상품 이미지나 상품명을 클릭해서 PDP로 이동하세요. "
+        "한국 카페24 기반 쇼핑몰의 상품 링크 패턴: "
+        "a[href*='/product/detail.html'], a[href*='product_no='], "
+        ".prdList a[href*='product'], .xans-product a[href*='product']. "
+        "스냅샷에서 href에 '/product/detail.html?product_no=' 가 포함된 a 태그를 찾아 클릭하세요. "
+        "목록이 보이지 않으면 먼저 scroll down 후 재시도하세요."
     ),
     "add_to_cart": (
         "상품 상세 페이지(PDP)에서 '장바구니 담기/추가' 버튼을 클릭하세요. "
         "텍스트: '장바구니', '담기', 'Add to Cart', 'Buy'. "
+        "카페24 패턴: button[onclick*='Basket'], a[onclick*='Basket'], "
+        "button[id*='buy'], #buy_now_btn, .EC-purchase-btn. "
         "현재 목록/홈 페이지라면 먼저 상품 클릭 → PDP로 이동하세요."
     ),
     "add_to_wishlist": (
@@ -52,7 +59,11 @@ EVENT_CAPTURE_GUIDE: dict[str, str] = {
     ),
     "view_item_list": (
         "카테고리/목록 페이지(PLP)에서 자동 발화됩니다. "
-        "현재 홈이라면 카테고리 메뉴나 상품 목록 링크를 클릭하세요."
+        "현재 홈이라면 카테고리 목록 URL을 찾아 navigate 액션으로 직접 이동하세요. "
+        "카테고리 URL 패턴: /product/list.html?cate_no=XXX, /category/XXX. "
+        "HTML에서 href에 '/product/list.html' 또는 '/category/'가 포함된 링크를 찾아 "
+        "click 대신 navigate 액션(url 필드에 전체 URL 입력)으로 이동하세요. "
+        "클릭이 안 되는 메뉴 링크가 있으면 반드시 navigate를 사용하세요."
     ),
     "begin_checkout": (
         "장바구니 또는 상품 상세 페이지에서 '구매하기', '바로구매', '결제하기' 버튼 클릭. "

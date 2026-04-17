@@ -51,6 +51,7 @@ class GTMAgentState(TypedDict):
     created_triggers: list
     created_tags: list
     publish_result: dict
+    publish_warning: str | None  # Publish 권한 부족 등 경고 (치명적 오류 아님)
     error: str | None
 
     # ── Node 3-4: 이벤트별 처리 내역 (Reporter용 구조화 로그) ────────────────
