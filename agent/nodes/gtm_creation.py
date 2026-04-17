@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
 from gtm.models import GTMParameter, GTMTag, GTMTrigger, GTMVariable
@@ -19,10 +21,12 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
 
     client = GTMClient()
 
-    # 신규 Workspace 생성
-    workspace = client.create_workspace("gtm-ai-workspace")
+    # 신규 Workspace 생성 — 실행마다 타임스탬프로 구분
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    workspace_name = f"gtm-ai-{run_ts}"
+    workspace = client.create_workspace(workspace_name)
     workspace_id = workspace["workspaceId"]
-    print(f"[GTMCreation] 신규 Workspace 생성: {workspace_id}")
+    print(f"[GTMCreation] 신규 Workspace 생성: {workspace_name} (id={workspace_id})")
 
     created_variables: list[dict] = []
     created_triggers: list[dict] = []
