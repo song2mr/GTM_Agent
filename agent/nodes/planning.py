@@ -367,16 +367,24 @@ async def _generate_plan(
         SystemMessage(content=_PLANNING_SYSTEM),
         HumanMessage(content="\n".join(content_parts)),
     ]
+    t_llm = time.perf_counter()
     try:
         response = await make_chat_llm(model=llm_model("planning")).ainvoke(messages)
     except Exception as e:
-        logger.error(f"[Planning] LLM 호출 실패 → 빈 설계안 반환: {e}")
+        logger.error(
+            f"[Planning] LLM 호출 실패 wall_s={time.perf_counter() - t_llm:.2f} "
+            f"→ 빈 설계안 반환: {e}"
+        )
         return {"variables": [], "triggers": [], "tags": []}
     token_tracker.track("planning", response)
+    raw_plan = response.content or ""
+    logger.info(
+        f"[Planning] LLM 완료 wall_s={time.perf_counter() - t_llm:.2f} reply_chars={len(raw_plan)}"
+    )
 
-    plan = parse_llm_json(response.content, fallback=None)
+    plan = parse_llm_json(raw_plan, fallback=None)
     if isinstance(plan, dict) and plan:
         return plan
 
-    logger.warning(f"[Planning] JSON 파싱 실패: {(response.content or '')[:300]}")
+    logger.warning(f"[Planning] JSON 파싱 실패: {raw_plan[:300]}")
     return {"variables": [], "triggers": [], "tags": []}

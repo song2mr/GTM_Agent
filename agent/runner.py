@@ -6,6 +6,7 @@ GTM 자격 정보는 환경변수가 아닌 config dict에서만 읽습니다.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from agent.graph import compile_graph
@@ -60,6 +61,16 @@ async def run_agent(config: dict) -> dict:
                 f"{container_id!r} → {resolved_container_id!r}"
             )
             container_id = resolved_container_id
+        # 워크스페이스 3개 한도 — Node 6 동작(신규 생성 vs 재사용)을 미리 짐작할 수 있게만 로그
+        try:
+            _n_ws = len(preflight.list_workspaces())
+            if _n_ws >= 3:
+                logger.info(
+                    f"[runner] GTM 워크스페이스 {_n_ws}개(상한 3) — "
+                    "Node 6에서는 신규 생성 없이 기존 `gtm-ai-*` 재사용을 시도합니다."
+                )
+        except Exception as _e_ws:
+            logger.info(f"[runner] 워크스페이스 개수 사전 확인 생략: {_e_ws}")
     except Exception as e:
         err = str(e)
         logger.info(f"[runner] GTM 컨테이너 사전 검증 실패: {err}")
@@ -133,6 +144,10 @@ async def run_agent(config: dict) -> dict:
         account_id=account_id,
         container_id=container_id,
     )
+    logger.info(
+        f"[runner] graph 준비 완료 run_id={run_id} tag_type={tag_type!r} "
+        f"url_len={len(target_url)} req_len={len(user_request)}"
+    )
 
     initial_state: GTMAgentState = {
         "user_request": user_request,
@@ -180,10 +195,13 @@ async def run_agent(config: dict) -> dict:
     }
 
     graph = compile_graph()
+    _wall0 = time.perf_counter()
     try:
         final_state = await graph.ainvoke(initial_state)
     except Exception as e:
-        logger.info(f"[runner] 그래프 실행 중 예외: {e}")
+        logger.warning(
+            f"[runner] graph 예외 run_id={run_id} wall_s={time.perf_counter() - _wall0:.1f}: {e}"
+        )
         flush_stale_running_nodes()
         emit("run_end", report_path=None, duration_ms=0, token_usage={})
         update_state(
@@ -196,6 +214,13 @@ async def run_agent(config: dict) -> dict:
         except Exception:
             pass
         return {**initial_state, "error": str(e)}
+
+    _wall = time.perf_counter() - _wall0
+    n_ev = len(final_state.get("captured_events") or [])
+    logger.info(
+        f"[runner] graph 완료 run_id={run_id} wall_s={_wall:.1f} "
+        f"captured_events={n_ev} final_error={final_state.get('error')!r}"
+    )
 
     # 종료 이벤트 emit
     usage = final_state.get("token_usage", {})

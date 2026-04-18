@@ -428,6 +428,14 @@ class LLMNavigator:
         captured_so_far: list[dict],
     ) -> Literal["captured", "manual_required", "skipped"]:
         """목표 이벤트 캡처를 시도합니다. 최대 MAX_STEPS 스텝."""
+        t_run = time.perf_counter()
+
+        def _evt_summary(outcome: str) -> None:
+            logger.info(
+                f"[Navigator] run_for_event 요약 event={target_event!r} outcome={outcome} "
+                f"wall_s={time.perf_counter() - t_run:.2f}"
+            )
+
         # 매 스텝 close_popup 시 동일 셀렉터 연타가 UI/시간 낭비 → 이벤트당 1회만
         await close_popup(page)
         logger.info(f"[Navigator] run_for_event 시작: 초기 close_popup 1회 event={target_event}")
@@ -445,11 +453,13 @@ class LLMNavigator:
             if action == "captured":
                 logger.info(f"[Navigator] {target_event} 이미 캡처됨")
                 await logger.save_screenshot(page, target_event, step, "captured")
+                _evt_summary("already_captured")
                 return "captured"
 
             if action == "impossible":
                 logger.info(f"[Navigator] {target_event} 캡처 불가: {decision.get('reason', '')[:120]}")
                 await logger.save_screenshot(page, target_event, step, "impossible")
+                _evt_summary("impossible")
                 return "manual_required"
 
             await logger.save_screenshot(page, target_event, step, "before")
@@ -503,12 +513,14 @@ class LLMNavigator:
                 self._action_history.append(history_entry)
                 await logger.save_screenshot(page, target_event, step, "success")
                 logger.info(f"[Navigator] {target_event} 캡처 성공 (스텝{step})")
+                _evt_summary(f"captured_step{step}")
                 return "captured"
 
             self._action_history.append(history_entry)
             logger.info(f"[Navigator] {target_event} 스텝{step}: 액션 성공 but 이벤트 미발화")
 
         logger.info(f"[Navigator] {target_event} {MAX_STEPS}스텝 소진 → Manual 이관")
+        _evt_summary("max_steps_exhausted")
         return "manual_required"
 
     async def _execute_action(self, page: Page, decision: dict) -> ActionResult:

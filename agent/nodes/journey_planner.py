@@ -170,13 +170,21 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
         ),
     ]
     llm = make_chat_llm(model=llm_model("journey_planner"))
+    t_llm = time.perf_counter()
     try:
         response = await llm.ainvoke(messages)
         token_tracker.track("journey_planner", response)
         raw = response.content or ""
+        logger.info(
+            f"[JourneyPlanner] LLM 완료 wall_s={time.perf_counter() - t_llm:.2f} "
+            f"reply_chars={len(raw)}"
+        )
     except Exception as e:
         # 네트워크·API 키·rate limit·타임아웃 등 — 파이프라인을 죽이지 않고 기본 큐로 진행
-        logger.error(f"[JourneyPlanner] LLM 호출 실패 → 기본 큐 폴백: {e}")
+        logger.error(
+            f"[JourneyPlanner] LLM 호출 실패 wall_s={time.perf_counter() - t_llm:.2f} "
+            f"→ 기본 큐 폴백: {e}"
+        )
         emit(
             "thought", who="agent", label="JourneyPlanner",
             text=f"LLM 호출 실패 → 기본 큐로 진행: {e}",

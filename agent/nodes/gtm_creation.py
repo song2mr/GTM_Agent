@@ -12,7 +12,10 @@ from datetime import datetime
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
 from gtm.models import GTMParameter, GTMTag, GTMTrigger, GTMVariable
+from utils import logger
 from utils.ui_emitter import emit, update_state
+
+GTM_WORKSPACE_LIMIT = 3
 
 
 def _sync_created_resources_ui(
@@ -65,42 +68,103 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     trigger_name_to_id: dict[str, str] = {}
     workspace_id = ""
 
+    def _sorted_ai_workspaces(ws_list: list[dict]) -> list[dict]:
+        return sorted(
+            [w for w in ws_list if w.get("name", "").startswith("gtm-ai-")],
+            key=lambda w: w.get("workspaceId", "0"),
+            reverse=True,
+        )
+
     try:
-        # 신규 Workspace 생성 — 실행마다 타임스탬프로 구분 (429 시 재시도 + fallback)
-        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        workspace_name = f"gtm-ai-{run_ts}"
-        for attempt in range(3):
-            try:
-                workspace = client.create_workspace(workspace_name)
-                workspace_id = workspace["workspaceId"]
-                print(f"[GTMCreation] 신규 Workspace 생성: {workspace_name} (id={workspace_id})")
-                break
-            except Exception as e:
-                if "rateLimitExceeded" in str(e) or "429" in str(e):
-                    wait_sec = 30 * (attempt + 1)
-                    print(f"[GTMCreation] 429 Rate Limit — {wait_sec}초 후 재시도 ({attempt+1}/3)...")
-                    time.sleep(wait_sec)
-                else:
-                    raise
-        else:
-            # 3회 재시도 후 실패 → 기존 gtm-ai-* workspace 재사용 (Rate Limit 회피)
-            print("[GTMCreation] Rate Limit 지속 → 기존 Workspace 재사용 시도...")
-            existing_ws = client.list_workspaces()
-            ai_ws = sorted(
-                [w for w in existing_ws if w.get("name", "").startswith("gtm-ai-")],
-                key=lambda w: w.get("workspaceId", "0"),
-                reverse=True,
+        existing_ws = client.list_workspaces()
+        n_ws = len(existing_ws)
+
+        # 무료 컨테이너 워크스페이스 상한(3) — 꽉 찼으면 신규 생성 API를 호출하지 않고 재사용만 시도
+        if n_ws >= GTM_WORKSPACE_LIMIT:
+            ai_ws = _sorted_ai_workspaces(existing_ws)
+            names_preview = ", ".join(
+                w.get("name", w.get("workspaceId", "?")) for w in existing_ws[:5]
+            )
+            logger.info(
+                f"[GTMCreation] 워크스페이스 {n_ws}개(한도 {GTM_WORKSPACE_LIMIT}) — "
+                f"신규 생성 생략, gtm-ai-* 재사용 후보 {len(ai_ws)}개"
+            )
+            emit(
+                "thought",
+                who="tool",
+                label="GTM Workspace",
+                text=(
+                    f"이 컨테이너는 워크스페이스가 이미 {n_ws}개(최대 {GTM_WORKSPACE_LIMIT})입니다. "
+                    "신규 작업공간은 만들지 않습니다. "
+                    + (
+                        f"기존 `gtm-ai-*` 중 최신({ai_ws[0].get('name', '')})에 설계안을 적용합니다."
+                        if ai_ws
+                        else (
+                            "이름이 `gtm-ai-`로 시작하는 작업공간이 없어 자동 재사용할 수 없습니다. "
+                            "GTM에서 워크스페이스를 비우거나 `gtm-ai-` 접두사 작업공간을 하나 만든 뒤 다시 실행하세요."
+                        )
+                    )
+                    + f"\n(현재 이름 일부: {names_preview})"
+                ),
+                kind="plain",
             )
             if ai_ws:
                 workspace_id = ai_ws[0]["workspaceId"]
-                print(f"[GTMCreation] 기존 Workspace 재사용: {ai_ws[0]['name']} (id={workspace_id})")
+                print(
+                    f"[GTMCreation] 한도 도달 → 기존 Workspace 재사용: "
+                    f"{ai_ws[0]['name']} (id={workspace_id})"
+                )
             else:
+                err = (
+                    "워크스페이스가 3개로 가득 찼고, 재사용 가능한 `gtm-ai-*` 작업공간이 없습니다. "
+                    "GTM에서 불필요한 작업공간을 삭제하세요."
+                )
                 emit("node_exit", node_id=6, status="failed", duration_ms=0)
                 update_state(nodes_status={"gtm_creation": "failed"})
-                return {
-                    **state,
-                    "error": "Workspace 생성 실패: Rate Limit 초과 + 재사용 가능한 Workspace 없음",
-                }
+                return {**state, "error": err}
+
+        else:
+            # 신규 Workspace 생성 — 실행마다 타임스탬프로 구분 (429 시 재시도 + fallback)
+            run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            workspace_name = f"gtm-ai-{run_ts}"
+            for attempt in range(3):
+                try:
+                    workspace = client.create_workspace(workspace_name)
+                    workspace_id = workspace["workspaceId"]
+                    print(f"[GTMCreation] 신규 Workspace 생성: {workspace_name} (id={workspace_id})")
+                    break
+                except Exception as e:
+                    if "rateLimitExceeded" in str(e) or "429" in str(e):
+                        wait_sec = 30 * (attempt + 1)
+                        print(f"[GTMCreation] 429 Rate Limit — {wait_sec}초 후 재시도 ({attempt+1}/3)...")
+                        time.sleep(wait_sec)
+                    else:
+                        raise
+            else:
+                # 3회 재시도 후 실패 → 기존 gtm-ai-* workspace 재사용 (Rate Limit 회피)
+                print("[GTMCreation] Rate Limit 지속 → 기존 Workspace 재사용 시도...")
+                existing_ws = client.list_workspaces()
+                ai_ws = _sorted_ai_workspaces(existing_ws)
+                if ai_ws:
+                    workspace_id = ai_ws[0]["workspaceId"]
+                    print(f"[GTMCreation] 기존 Workspace 재사용: {ai_ws[0]['name']} (id={workspace_id})")
+                    emit(
+                        "thought",
+                        who="tool",
+                        label="GTM Workspace",
+                        text=(
+                            "API Rate Limit으로 신규 작업공간 생성에 실패해, "
+                            f"기존 `{ai_ws[0].get('name', '')}` 에 설계안을 적용합니다."
+                        ),
+                        kind="plain",
+                    )
+                else:
+                    emit("node_exit", node_id=6, status="failed", duration_ms=0)
+                    update_state(nodes_status={"gtm_creation": "failed"})
+                    return {
+                        **state,
+                        "error": "Workspace 생성 실패: Rate Limit 초과 + 재사용 가능한 Workspace 없음",
+                    }
 
         # 1. Variable 생성
         for var_spec in plan.get("variables", []):

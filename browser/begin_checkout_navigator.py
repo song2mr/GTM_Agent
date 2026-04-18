@@ -232,6 +232,14 @@ class BeginCheckoutNavigator:
         target_event: str,
         captured_so_far: list[dict],
     ) -> Literal["captured", "manual_required", "skipped"]:
+        t_run = time.perf_counter()
+
+        def _evt_summary(outcome: str) -> None:
+            logger.info(
+                f"[CheckoutNavigator] run_for_event 요약 event={target_event!r} outcome={outcome} "
+                f"wall_s={time.perf_counter() - t_run:.2f}"
+            )
+
         await close_popup(page)
         for step in range(1, self._max_steps + 1):
             decision = await self.decide_next_action(
@@ -241,10 +249,12 @@ class BeginCheckoutNavigator:
 
             if action == "captured":
                 await logger.save_screenshot(page, target_event, step, "captured")
+                _evt_summary("already_captured")
                 return "captured"
 
             if action == "impossible":
                 await logger.save_screenshot(page, target_event, step, "impossible")
+                _evt_summary("impossible")
                 return "manual_required"
 
             await logger.save_screenshot(page, target_event, step, "before")
@@ -289,6 +299,7 @@ class BeginCheckoutNavigator:
                 history_entry["event_fired"] = True
                 self._action_history.append(history_entry)
                 await logger.save_screenshot(page, target_event, step, "success")
+                _evt_summary(f"captured_step{step}")
                 return "captured"
 
             self._action_history.append(history_entry)
@@ -296,6 +307,7 @@ class BeginCheckoutNavigator:
                 f"[CheckoutNavigator] {target_event} 스텝{step}: 액션 성공 but 이벤트 미발화"
             )
 
+        _evt_summary("max_steps_exhausted")
         return "manual_required"
 
     async def _execute_action(self, page: Page, decision: dict) -> ActionResult:

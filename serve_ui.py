@@ -71,6 +71,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     loop.run_until_complete(run_agent(config))
                 except Exception as e:
                     print(f"[serve_ui] Agent error: {e}", flush=True)
+                    try:
+                        from utils import logger as _run_log
+
+                        _run_log.error(
+                            f"[serve_ui] agent thread run_id={config.get('run_id')!r}: {e}"
+                        )
+                    except RuntimeError:
+                        pass
                 finally:
                     loop.close()
 

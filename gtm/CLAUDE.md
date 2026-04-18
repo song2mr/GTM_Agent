@@ -67,9 +67,14 @@ publish_version(version_id) -> dict
 
 ### Workspace 한도 초과
 
-GTM 무료 계정은 워크스페이스를 최대 3개까지만 허용한다.
-`create_workspace`는 생성 전에 현재 수를 확인하고, 한도에 도달하면 자동 삭제 없이
-현재 워크스페이스 목록을 포함한 `RuntimeError`를 던진다 — 삭제는 사용자가 직접 한다.
+GTM 무료 계정은 워크스페이스를 최대 3개까지 허용한다.
+
+- `create_workspace`는 **목록 조회에 성공한 경우에만** 개수를 보고, 한도에 도달하면
+  `RuntimeError`를 던진다. 목록 조회 자체가 실패하면 한도를 건너뛸 수 없으므로
+  같은 예외 계열로 실패 처리한다(이전에는 조회 실패를 무시하는 버그가 있었다).
+- `agent/nodes/gtm_creation.py`는 **이미 3개면 신규 `create`를 호출하지 않고**,
+  이름이 `gtm-ai-*`인 기존 작업공간이 있으면 그중 최신에 설계안을 적용한다.
+  해당 `gtm-ai-*`가 없으면 Node 6에서 실패하고, UI `thought`로 이유를 남긴다.
 
 ### Rate Limit (429)
 

@@ -192,7 +192,7 @@ LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
 **실행 순서 엄수**: Variable → Trigger → Tag (의존 관계)
 **이름 충돌**: `create_or_update_*` 메서드로 덮어쓰기
 **Rate Limit(429)**: 최대 3회 재시도(30/60/90초), 실패 시 기존 `gtm-ai-*` workspace 재사용
-**Workspace**: 실행마다 `gtm-ai-{timestamp}` 이름으로 신규 생성
+**Workspace**: 워크스페이스가 3개 미만이면 `gtm-ai-{timestamp}` 신규 생성. **이미 3개면** 신규 생성 API를 부르지 않고 기존 `gtm-ai-*` 최신에 덮어쓰기(없으면 실패 + UI `thought`).
 
 `plan` 자동 보정 (`_fix_plan`): 누락 트리거 생성 + 잘못된 `firing_trigger_names` 수정.
 

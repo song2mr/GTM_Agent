@@ -132,17 +132,19 @@ class GTMClient:
 
         try:
             workspaces = self.list_workspaces()
-            if len(workspaces) >= GTM_WORKSPACE_LIMIT:
-                names = ", ".join(w.get("name", w.get("workspaceId", "?")) for w in workspaces)
-                raise RuntimeError(
-                    f"GTM 워크스페이스가 최대 {GTM_WORKSPACE_LIMIT}개로 꽉 찼습니다. "
-                    f"현재 워크스페이스: {names}. "
-                    "GTM 콘솔에서 불필요한 워크스페이스를 삭제한 뒤 다시 시도해 주세요."
-                )
-        except RuntimeError:
-            raise
         except Exception as e:
-            print(f"[GTMClient] Workspace 목록 조회 실패 (무시): {e}")
+            raise RuntimeError(
+                "GTM 워크스페이스 목록을 가져올 수 없어 생성 전 한도를 확인할 수 없습니다. "
+                "OAuth 권한·네트워크를 확인하세요."
+            ) from e
+        if len(workspaces) >= GTM_WORKSPACE_LIMIT:
+            names = ", ".join(w.get("name", w.get("workspaceId", "?")) for w in workspaces)
+            raise RuntimeError(
+                f"GTM 워크스페이스가 최대 {GTM_WORKSPACE_LIMIT}개로 꽉 찼습니다. "
+                f"현재 워크스페이스: {names}. "
+                "GTM 콘솔에서 불필요한 워크스페이스를 삭제하거나, "
+                "에이전트가 기존 `gtm-ai-*` 작업공간을 재사용하도록 실행 설정을 맞추세요."
+            )
 
         body = {"name": name, "description": "Created by GTM AI Agent"}
         try:

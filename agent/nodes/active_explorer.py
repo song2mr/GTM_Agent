@@ -352,6 +352,10 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
 
     logger.info(f"[ActiveExplorer] 총 캡처 이벤트: {len(captured_events)}개")
     logger.info(f"[ActiveExplorer] Manual 이관: {manual_required}")
+    logger.info(
+        f"[ActiveExplorer] 노드 요약 wall_s={time.time() - _started:.1f}s "
+        f"captured={len(captured_events)} manual_n={len(manual_required)}"
+    )
     logger.save_events(captured_events)
 
     # 캡처된 datalayer 이벤트를 UI로 emit
