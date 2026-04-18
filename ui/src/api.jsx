@@ -3,6 +3,14 @@
 
 const POLL_MS = 1500;
 
+/** 백엔드 ISO ts(UTC …Z) → 한국 표준시 시각 문자열 HH:mm:ss */
+function formatTimeKst(iso) {
+  if (!iso || typeof iso !== "string") return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.length >= 19 ? iso.slice(11, 19) : "—";
+  return d.toLocaleTimeString("sv-SE", { timeZone: "Asia/Seoul", hour12: false });
+}
+
 window.useRunLog = function useRunLog(runId) {
   const [state, setState] = React.useState({ nodes: [], status: "loading" });
   const [events, setEvents] = React.useState([]);   // datalayer_event 목록
@@ -47,7 +55,7 @@ window.useRunLog = function useRunLog(runId) {
               lastNodeKeyRef.current = ev.node_key;
             } else if (ev.type === "datalayer_event") {
               setEvents(cur => [...cur, {
-                t: ev.ts.slice(11, 23),
+                t: formatTimeKst(ev.ts),
                 event: ev.event,
                 url: ev.url,
                 source: ev.source,
@@ -57,7 +65,7 @@ window.useRunLog = function useRunLog(runId) {
               setThoughts(cur => [...cur, {
                 who: ev.who,
                 label: ev.label,
-                time: ev.ts.slice(11, 19),
+                time: formatTimeKst(ev.ts),
                 kind: ev.kind || "plain",
                 text: ev.text,
                 nodeKey: lastNodeKeyRef.current || undefined,

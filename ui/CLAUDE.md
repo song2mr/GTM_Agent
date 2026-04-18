@@ -56,7 +56,7 @@ const { state, events, thoughts, plan, publishResult } = useRunLog(runId)
 ```
 - `state`: `state.json` 전체 (nodes, status, token_usage, `created_*`, `workspace_id` 등)
 - `events`: `datalayer_event` 타입만 필터
-- `thoughts`: `thought` 타입만 필터. 증분 파싱 시 직전 `node_enter`의 `node_key`를 `nodeKey` 필드로 붙여 **노드별 필터**에 사용
+- `thoughts`: `thought` 타입만 필터. 증분 파싱 시 직전 `node_enter`의 `node_key`를 `nodeKey` 필드로 붙여 **노드별 필터**에 사용. `time`은 로그 `ts`(UTC)를 **`Asia/Seoul`** 기준 `HH:mm:ss`로 변환한 값
 - `plan`: 가장 최근 `hitl_request` 이벤트의 `plan`
 - `publishResult`: `publish_result` 이벤트
 
