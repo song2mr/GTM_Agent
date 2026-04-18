@@ -20,6 +20,7 @@ from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
 from browser.listener import get_captured_events, inject_listener
 from browser.navigator import LLMNavigator
+from browser.url_context import url_looks_like_pdp
 from utils import logger
 from utils.ui_emitter import emit, update_state
 
@@ -92,6 +93,17 @@ def _build_synthetic_event(
     }
 
 
+def _auto_capturable_with_cart_addition_order(
+    auto: list[str],
+    cart_addition_events: list[str],
+) -> list[str]:
+    """장바구니 담기가 뒤 노드에 있으면 `view_cart`를 맨 뒤로 — PDP에서 옵션·담기가 먼저."""
+    if not cart_addition_events or "view_cart" not in auto:
+        return list(auto)
+    others = [e for e in auto if e != "view_cart"]
+    return others + ["view_cart"]
+
+
 async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     """Node 3: LLM Navigator + Playwright 루프."""
     emit("node_enter", node_id=3, node_key="active_explorer", title="Active Explorer")
@@ -112,6 +124,7 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     use_dom = extraction_method != "datalayer"
 
     navigator = LLMNavigator()
+    last_pdp_url = (state.get("last_pdp_url") or "").strip()
 
     headless = os.environ.get("GTM_AI_HEADLESS", "").lower() in ("1", "true", "yes")
     logger.info(
@@ -140,6 +153,8 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
 
             try:
                 live_page_url = page.url
+                if url_looks_like_pdp(live_page_url):
+                    last_pdp_url = live_page_url
             except Exception:
                 live_page_url = target_url
 
@@ -163,7 +178,19 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                 state.get("begin_checkout_events") or []
             )
 
-            for target_event in auto_capturable:
+            ordered_auto = _auto_capturable_with_cart_addition_order(
+                auto_capturable,
+                list(state.get("cart_addition_events") or []),
+            )
+
+            for target_event in ordered_auto:
+                try:
+                    u = page.url
+                    if url_looks_like_pdp(u):
+                        last_pdp_url = u
+                except Exception:
+                    pass
+
                 if target_event in deferred:
                     exploration_log.append(
                         f"{target_event}: 전용 탐색 노드로 이월 (Active Explorer 스킵)"
@@ -388,6 +415,7 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
         "captured_events": captured_events,
         "manual_required": manual_required,
         "current_url": live_page_url,
+        "last_pdp_url": last_pdp_url,
         "exploration_log": exploration_log,
         "event_capture_log": event_capture_log,
     }

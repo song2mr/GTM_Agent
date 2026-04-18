@@ -16,6 +16,7 @@ from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
 from browser.cart_addition_navigator import CartAdditionNavigator
 from browser.listener import event_fingerprint, get_captured_events, inject_listener
+from browser.url_context import url_looks_like_cart_resume, url_looks_like_pdp
 from utils import logger
 from utils.ui_emitter import emit, update_state
 
@@ -38,7 +39,16 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
         update_state(nodes_status={"cart_addition_explorer": "skip"})
         return state
 
-    target_url = state.get("current_url") or state["target_url"]
+    resume = state.get("current_url") or state["target_url"]
+    last_pdp_url = (state.get("last_pdp_url") or "").strip()
+    if url_looks_like_cart_resume(resume) and last_pdp_url:
+        target_url = last_pdp_url
+        logger.info(
+            f"[CartAdditionExplorer] resume가 장바구니형 → last_pdp_url로 PDP 재개: {target_url!r}"
+        )
+    else:
+        target_url = resume
+
     manual_required = list(state.get("manual_required", []))
     captured_events: list[dict] = list(state.get("captured_events", []))
     exploration_log: list[str] = list(state.get("exploration_log", []))
@@ -55,6 +65,8 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
         f"headless={headless}"
     )
 
+    last_live_url = target_url
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=headless,
@@ -66,8 +78,21 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
             await inject_listener(page)
             await navigate(page, target_url)
             await page.wait_for_timeout(2000)
+            try:
+                last_live_url = page.url
+                if url_looks_like_pdp(last_live_url):
+                    last_pdp_url = last_live_url
+            except Exception:
+                pass
 
             for target_event in targets:
+                try:
+                    last_live_url = page.url
+                    if url_looks_like_pdp(last_live_url):
+                        last_pdp_url = last_live_url
+                except Exception:
+                    pass
+
                 already = any(
                     e.get("data", {}).get("event") == target_event for e in captured_events
                 )
@@ -170,6 +195,13 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
                     }
                 )
 
+            try:
+                last_live_url = page.url
+                if url_looks_like_pdp(last_live_url):
+                    last_pdp_url = last_live_url
+            except Exception:
+                pass
+
         finally:
             try:
                 await browser.close()
@@ -200,7 +232,8 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
         **state,
         "captured_events": captured_events,
         "manual_required": manual_required,
-        "current_url": target_url,
+        "current_url": last_live_url,
+        "last_pdp_url": last_pdp_url,
         "exploration_log": exploration_log,
         "event_capture_log": event_capture_log,
     }

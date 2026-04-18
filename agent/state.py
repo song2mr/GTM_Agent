@@ -39,6 +39,8 @@ class GTMAgentState(TypedDict):
     captured_events: list       # [{event, params, url, timestamp}, ...]
     exploration_log: list       # 각 시도 결과 로그 (디버깅용)
     current_url: str
+    # PDP URL 마지막 스냅샷 — 장바구니 전용 노드가 current_url이 카트일 때 재개용
+    last_pdp_url: str
 
     # ── Node 4: Manual Capture Gateway ──────────────────────────────────────
     manual_capture_results: dict    # {event_name: dataLayer_schema}

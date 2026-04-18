@@ -24,25 +24,12 @@ from browser.actions import (
     set_location_hash,
 )
 from browser.listener import event_fingerprint, get_captured_events
+from browser.url_context import url_looks_like_pdp
 from config.exploration_limits_loader import cart_addition_max_llm_steps
 from config.llm_models_loader import llm_model
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit
-
-_PDP_URL_MARKERS = (
-    "goods_view",
-    "goods_no=",
-    "product/detail",
-    "product_no=",
-    "/goods/goods_view",
-)
-
-
-def _url_looks_like_pdp(url: str) -> bool:
-    u = (url or "").lower()
-    return any(m in u for m in _PDP_URL_MARKERS)
-
 
 def _primary_click_selector(raw: str | None) -> str:
     s = (raw or "").strip()
@@ -125,7 +112,7 @@ class CartAdditionNavigator:
             f"[CartNavigator] decide_next_action event={target_event} "
             f"step={step}/{self._max_steps} url={page.url!r}"
         )
-        if _url_looks_like_pdp(page.url):
+        if url_looks_like_pdp(page.url):
             try:
                 await page.mouse.wheel(0, 1200)
                 await page.wait_for_timeout(400)

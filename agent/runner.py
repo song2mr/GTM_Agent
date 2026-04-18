@@ -278,6 +278,7 @@ async def run_agent(config: dict) -> dict:
         "captured_events": [],
         "exploration_log": [],
         "current_url": "",
+        "last_pdp_url": "",
         "manual_capture_results": {},
         "skipped_events": [],
         "doc_context": "",
