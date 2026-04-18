@@ -35,7 +35,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────
-function Sidebar({ route, onRoute, running }) {
+function Sidebar({ route, onRoute, running, hitlWaiting }) {
   const { activeWorkspace, workspaces } = window.useWorkspaces();
   const wsLabel = activeWorkspace ? activeWorkspace.name : (workspaces.length === 0 ? "워크스페이스 없음" : "선택 안 됨");
   const wsCount = activeWorkspace ? (activeWorkspace.containerId || "—") : null;
@@ -43,7 +43,7 @@ function Sidebar({ route, onRoute, running }) {
   const items = [
     { key: "run",      label: "Run",        icon: "run",       count: running ? "●" : "" },
     { key: "history",  label: "History",    icon: "history",   count: "" },
-    { key: "hitl",     label: "Approvals",  icon: "sparkle",   count: "" },
+    { key: "hitl",     label: "Approvals",  icon: "sparkle",   count: hitlWaiting ? "●" : "" },
     { key: "resources",label: "Resources",  icon: "resources", count: "" },
     { key: "report",   label: "Report",     icon: "report",    count: "" },
   ];

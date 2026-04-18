@@ -140,7 +140,15 @@ function App() {
   const running = route === "live" && !!runId;
 
   // 항상 훅을 최상위에서 호출 (Rules of Hooks)
-  const { state: runState } = window.useRunLog(runId);
+  const { state: runState, workspaceAsk } = window.useRunLog(runId);
+
+  // 워크스페이스 상한 HITL 요청이 들어오면 Approvals 화면으로 자동 전환
+  useEffect(() => {
+    if (workspaceAsk && route !== "hitl") {
+      navigate(undefined, "hitl");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceAsk]);
 
   // 에이전트 시작 콜백 — RunStartScreen에서 호출
   const handleStart = ({ runId: newRunId, navigate: navTarget }) => {
@@ -196,9 +204,12 @@ function App() {
     }
   }
 
+  const hitlWaiting = !!workspaceAsk
+    || (runState.nodes || []).some(n => n.status === "hitl_wait");
+
   return (
     <div className="app-shell" data-screen-label="Main">
-      <Sidebar route={navRoute} onRoute={onNavRoute} running={running} />
+      <Sidebar route={navRoute} onRoute={onNavRoute} running={running} hitlWaiting={hitlWaiting} />
       <div className="main">
         <Topbar crumbs={crumbs}>
           <button className="btn ghost sm" onClick={() => navigate("", "start")}>

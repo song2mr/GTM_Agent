@@ -53,12 +53,13 @@ serve_ui.py
 
 ### useRunLog(runId)
 ```js
-const { state, events, thoughts, plan, publishResult } = useRunLog(runId)
+const { state, events, thoughts, plan, workspaceAsk, publishResult } = useRunLog(runId)
 ```
 - `state`: `state.json` 전체 (nodes, status, token_usage, `created_*`, `workspace_id` 등)
 - `events`: `datalayer_event` 타입만 필터
 - `thoughts`: `thought` 타입만 필터. 증분 파싱 시 직전 `node_enter`의 `node_key`를 `nodeKey` 필드로 붙여 **노드별 필터**에 사용. `time`은 로그 `ts`(UTC)를 **`Asia/Seoul`** 기준 `HH:mm:ss`로 변환한 값
-- `plan`: 가장 최근 `hitl_request` 이벤트의 `plan`
+- `plan`: `hitl_request` 이벤트 중 `kind`가 없거나 `"plan"`인 것의 `plan` 필드 (Node 5 설계안 검토)
+- `workspaceAsk`: `hitl_request` 이벤트 중 `kind="workspace_full"`의 페이로드 — `{workspaces, current_count, limit, default_reuse_id, message}`. Node 6에서 워크스페이스 상한(3)에 걸렸을 때만 세팅. `hitl_decision` 수신 시 `null`로 초기화
 - `publishResult`: `publish_result` 이벤트
 
 ### useWorkspaces()
@@ -106,11 +107,23 @@ routeMap = {
 
 ## HITL 흐름
 
-1. `planning.py`가 `hitl_request` 이벤트 emit → `events.jsonl`에 기록
+HITL 이벤트는 `kind` 필드로 구분한다. `POST /api/hitl` 요청 본문에도 동일한 `kind`를 실어야 한다.
+`serve_ui.py`가 `kind="workspace_full"` 이면 `{decision, workspace_id}`, 그 외(`kind="plan"`)는 `{approved, feedback}` 스키마로 `hitl_response.json`에 기록한다.
+
+### A. Plan 검토 (Node 5 `planning.py`)
+1. `planning.py`가 `hitl_request`(`kind` 생략=`plan`, `plan` 포함) emit → `events.jsonl`에 기록
 2. `useRunLog`가 `plan` state 업데이트
 3. `HitlScreen`이 설계안 표시 + 승인/거부 버튼 노출
-4. 승인 → POST `/api/hitl` → `hitl_response.json` → 에이전트 재개 → `navigate("live")`
+4. 승인 → POST `/api/hitl` `{kind:"plan", approved:true}` → `hitl_response.json` → 에이전트 재개 → `navigate("live")`
 5. 거부 → `awaitingRedesign=true` → 에이전트가 재설계 후 새 `hitl_request` emit → 화면 자동 리셋
+
+### B. 워크스페이스 상한 (Node 6 `gtm_creation.py`)
+1. GTM 컨테이너의 워크스페이스가 상한(3)에 도달하면 `gtm_creation.py`가 신규 생성을 **시도하지 않고** `hitl_request`(`kind="workspace_full"`, `workspaces`/`default_reuse_id`/`current_count`/`limit`) emit
+2. `useRunLog`가 `workspaceAsk` state 업데이트 → `app.jsx`가 자동으로 `route="hitl"` 로 전환하고 사이드바 Approvals 뱃지(●) 점등
+3. `HitlScreen`이 Workspace 선택 카드를 **plan 검토보다 우선** 표시 — 라디오로 대상 작업공간을 고르고 `재사용` 또는 `실행 중단` 버튼 중 하나 클릭
+4. `재사용` → POST `/api/hitl` `{kind:"workspace_full", decision:"reuse", workspace_id}` → 해당 Workspace에 Variable/Trigger/Tag를 생성
+5. `실행 중단` 또는 5분 타임아웃 → `decision:"cancel"` → Node 6 `failed` 처리 후 상세 에러 메시지와 함께 종료
+6. 응답 즉시 `hitl_decision` 이벤트가 뒤따라 emit되어 UI 카드는 자동으로 닫힌다
 
 ---
 

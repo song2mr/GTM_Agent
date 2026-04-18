@@ -347,12 +347,44 @@ function RunLiveScreen({ runId }) {
 
 // ── 3. HITL Approval ────────────────────────────────────────────────────
 function HitlScreen({ runId, onApprove }) {
-  const { plan, state } = window.useRunLog(runId);
+  const { plan, state, workspaceAsk } = window.useRunLog(runId);
   const [feedback, setFeedback] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [awaitingRedesign, setAwaitingRedesign] = useState(false);
+  const [wsBusy, setWsBusy] = useState(false);
+  const [wsSent, setWsSent] = useState(false);
+  const [wsChoice, setWsChoice] = useState("");
   const prevPlanRef = React.useRef(null);
+
+  // 새 workspace_full 요청이 오면 UI 상태 초기화
+  React.useEffect(() => {
+    if (workspaceAsk) {
+      setWsSent(false);
+      setWsChoice(workspaceAsk.default_reuse_id || "");
+    }
+  }, [workspaceAsk]);
+
+  const sendWorkspaceDecision = async (decision) => {
+    if (!runId || !workspaceAsk) return;
+    setWsBusy(true);
+    try {
+      await fetch("/api/hitl", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          run_id: runId,
+          kind: "workspace_full",
+          decision, // "reuse" | "cancel"
+          workspace_id: decision === "reuse" ? (wsChoice || workspaceAsk.default_reuse_id || "") : "",
+        }),
+      });
+      setWsSent(true);
+    } catch (e) {
+      console.error("workspace HITL 전송 실패:", e);
+    }
+    setWsBusy(false);
+  };
 
   // 재설계 후 새 plan이 도착하면 자동으로 화면 리셋
   useEffect(() => {
@@ -399,6 +431,116 @@ function HitlScreen({ runId, onApprove }) {
           <div>
             <h1 className="page-title">Plan 검토 · HITL</h1>
             <div className="page-sub">실행 중인 Run이 없습니다.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 워크스페이스 상한 HITL — plan 검토보다 우선 표시
+  if (workspaceAsk) {
+    const wss = workspaceAsk.workspaces || [];
+    const selectedId = wsChoice || workspaceAsk.default_reuse_id || (wss[0] && wss[0].workspaceId) || "";
+    return (
+      <div className="page">
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">GTM 작업공간 선택 · HITL</h1>
+            <div className="page-sub">
+              {workspaceAsk.message ||
+                `워크스페이스가 ${workspaceAsk.current_count}/${workspaceAsk.limit} 로 가득 찼습니다.`}
+            </div>
+          </div>
+          <div className="row tight">
+            {wsSent
+              ? <span className="chip"><Icon name="check" size={12} />응답 전송됨</span>
+              : <span className="chip warn"><Icon name="clock" size={12} />사용자 결정 대기</span>}
+          </div>
+        </div>
+
+        <div className="hitl">
+          <div className="hitl-head">
+            <span className="stamp">Node 6 · GTM Creation</span>
+            <h3>작업공간 상한 도달</h3>
+            <span style={{ marginLeft: "auto" }} className="muted-mono">{runId}</span>
+          </div>
+          <div className="hitl-body">
+            <div className="kv-grid">
+              <dt>현재 워크스페이스</dt><dd>{workspaceAsk.current_count} / {workspaceAsk.limit}</dd>
+              <dt>기본 재사용 후보</dt>
+              <dd>
+                {(() => {
+                  const d = wss.find(w => w.workspaceId === workspaceAsk.default_reuse_id);
+                  return d ? `${d.name} (id=${d.workspaceId})` : "—";
+                })()}
+              </dd>
+            </div>
+
+            <div className="panel" style={{ boxShadow: "none" }}>
+              <div className="panel-head">
+                <div className="panel-title">
+                  기존 작업공간 목록
+                  <span className="chip">{wss.length}개</span>
+                </div>
+              </div>
+              <div className="panel-body" style={{ padding: 0 }}>
+                <table className="plan-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 32 }}></th>
+                      <th>name</th>
+                      <th>workspaceId</th>
+                      <th>비고</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {wss.map(w => (
+                      <tr key={w.workspaceId}>
+                        <td>
+                          <input
+                            type="radio"
+                            name="ws-reuse"
+                            disabled={wsSent || wsBusy}
+                            checked={selectedId === w.workspaceId}
+                            onChange={() => setWsChoice(w.workspaceId)}
+                          />
+                        </td>
+                        <td>{w.name || "(이름 없음)"}</td>
+                        <td className="mono">{w.workspaceId}</td>
+                        <td>
+                          {w.ai_managed ? <span className="chip accent">gtm-ai</span> : <span className="chip">사용자</span>}
+                        </td>
+                      </tr>
+                    ))}
+                    {wss.length === 0 ? (
+                      <tr><td colSpan={4} style={{ padding: 12, color: "var(--ink-4)" }}>표시할 작업공간이 없습니다.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="row tight" style={{ justifyContent: "flex-end", gap: 8 }}>
+              <button
+                className="btn"
+                disabled={wsBusy || wsSent}
+                onClick={() => sendWorkspaceDecision("cancel")}
+              >
+                <Icon name="x" size={12} /> 실행 중단
+              </button>
+              <button
+                className="btn primary"
+                disabled={wsBusy || wsSent || !selectedId}
+                onClick={() => sendWorkspaceDecision("reuse")}
+              >
+                <Icon name="check" size={12} /> 선택한 작업공간 재사용
+              </button>
+            </div>
+            {wsSent ? (
+              <div className="page-sub" style={{ marginTop: 8 }}>
+                응답을 전송했습니다. 에이전트가 이어서 처리합니다.
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

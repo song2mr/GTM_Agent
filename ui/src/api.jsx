@@ -16,6 +16,7 @@ window.useRunLog = function useRunLog(runId) {
   const [events, setEvents] = React.useState([]);   // datalayer_event 목록
   const [thoughts, setThoughts] = React.useState([]);
   const [plan, setPlan] = React.useState(null);
+  const [workspaceAsk, setWorkspaceAsk] = React.useState(null); // {kind:"workspace_full", workspaces, current_count, limit, default_reuse_id, message}
   const [publishResult, setPublishResult] = React.useState(null);
   const offsetRef = React.useRef(0);
   const lastNodeKeyRef = React.useRef("");
@@ -30,6 +31,7 @@ window.useRunLog = function useRunLog(runId) {
     setEvents([]);
     setThoughts([]);
     setPlan(null);
+    setWorkspaceAsk(null);
     setPublishResult(null);
     setState({ nodes: [], status: "loading" });
 
@@ -71,7 +73,22 @@ window.useRunLog = function useRunLog(runId) {
                 nodeKey: lastNodeKeyRef.current || undefined,
               }]);
             } else if (ev.type === "hitl_request") {
-              setPlan(ev.plan);
+              const kind = ev.kind || "plan";
+              if (kind === "workspace_full") {
+                setWorkspaceAsk({
+                  kind: "workspace_full",
+                  workspaces: ev.workspaces || [],
+                  current_count: ev.current_count || 0,
+                  limit: ev.limit || 3,
+                  default_reuse_id: ev.default_reuse_id || "",
+                  message: ev.message || "",
+                });
+              } else {
+                setPlan(ev.plan);
+              }
+            } else if (ev.type === "hitl_decision") {
+              // 결정이 내려지면 workspace_full 카드는 닫는다
+              setWorkspaceAsk(null);
             } else if (ev.type === "publish_result") {
               setPublishResult({
                 success: ev.success,
@@ -90,7 +107,7 @@ window.useRunLog = function useRunLog(runId) {
     return () => { alive = false; };
   }, [runId]);
 
-  return { state, events, thoughts, plan, publishResult };
+  return { state, events, thoughts, plan, workspaceAsk, publishResult };
 };
 
 window.useHistory = function useHistory() {

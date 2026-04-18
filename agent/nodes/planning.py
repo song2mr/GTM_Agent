@@ -268,12 +268,17 @@ def _wait_for_hitl(hitl_mode: str) -> tuple[str, str]:
                 try:
                     resp = json.loads(response_file.read_text(encoding="utf-8"))
                     response_file.unlink(missing_ok=True)
-                    approved = resp.get("approved", True)
-                    feedback = resp.get("feedback", "")
-                    print(f"[Planning] UI 응답 수신: {'승인' if approved else '거부'}")
-                    return ("y" if approved else "n"), feedback
                 except Exception:
-                    pass
+                    time.sleep(1)
+                    continue
+                # workspace_full 등 타 HITL 응답이면 계속 대기 (다른 노드가 처리)
+                kind = resp.get("kind", "plan")
+                if kind != "plan":
+                    continue
+                approved = resp.get("approved", True)
+                feedback = resp.get("feedback", "")
+                print(f"[Planning] UI 응답 수신: {'승인' if approved else '거부'}")
+                return ("y" if approved else "n"), feedback
             time.sleep(1)
         print("[Planning] HITL 타임아웃 — 자동 승인")
         return "y", ""

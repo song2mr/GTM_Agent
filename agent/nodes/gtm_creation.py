@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 
@@ -16,6 +17,112 @@ from utils import logger
 from utils.ui_emitter import emit, update_state
 
 GTM_WORKSPACE_LIMIT = 3
+WORKSPACE_HITL_TIMEOUT_SEC = 300  # UI 폼 기반 응답 대기 (5분)
+
+
+def _wait_for_workspace_decision(
+    *,
+    hitl_mode: str,
+    workspaces: list[dict],
+    ai_workspaces: list[dict],
+    current_count: int,
+    limit: int,
+) -> tuple[str, str]:
+    """워크스페이스 상한에 걸렸을 때 사용자 결정을 기다린다.
+
+    반환값: (decision, workspace_id)
+      - decision: "reuse" | "cancel"
+      - workspace_id: decision == "reuse" 일 때 사용할 대상 Workspace ID.
+                      선택값이 없으면 ai_workspaces[0] 를 기본값으로 사용한다.
+    """
+    from utils import logger as _logger
+
+    # UI에 선택지 페이로드 전송 — plan 대신 워크스페이스 목록을 보낸다.
+    ws_options = [
+        {
+            "workspaceId": w.get("workspaceId", ""),
+            "name": w.get("name", ""),
+            "description": w.get("description", ""),
+            "ai_managed": (w.get("name", "") or "").startswith("gtm-ai-"),
+        }
+        for w in workspaces
+    ]
+    default_reuse_id = ai_workspaces[0].get("workspaceId", "") if ai_workspaces else (
+        ws_options[0]["workspaceId"] if ws_options else ""
+    )
+
+    emit(
+        "hitl_request",
+        kind="workspace_full",
+        current_count=current_count,
+        limit=limit,
+        workspaces=ws_options,
+        default_reuse_id=default_reuse_id,
+        message=(
+            f"이 컨테이너의 워크스페이스가 {current_count}/{limit} 로 가득 찼습니다. "
+            "기존 작업공간을 재사용할지, 실행을 중단할지 선택해 주세요."
+        ),
+    )
+    update_state(nodes_status={"gtm_creation": "hitl_wait"})
+
+    run_dir = _logger.run_dir()
+    if hitl_mode == "file" and run_dir:
+        response_file = run_dir / "hitl_response.json"
+        response_file.unlink(missing_ok=True)
+        print(
+            f"[GTMCreation] UI HITL 대기 — 워크스페이스 {current_count}/{limit} "
+            f"(최대 {WORKSPACE_HITL_TIMEOUT_SEC}s)"
+        )
+        deadline = time.time() + WORKSPACE_HITL_TIMEOUT_SEC
+        while time.time() < deadline:
+            if response_file.exists():
+                try:
+                    resp = json.loads(response_file.read_text(encoding="utf-8"))
+                    response_file.unlink(missing_ok=True)
+                except Exception:
+                    time.sleep(1)
+                    continue
+                if resp.get("kind") != "workspace_full":
+                    # 다른 HITL 응답(plan 승인 등) — 무시하고 계속 대기
+                    continue
+                decision = (resp.get("decision") or "").strip().lower()
+                ws_id = (resp.get("workspace_id") or "").strip()
+                if decision == "cancel":
+                    print("[GTMCreation] UI 응답: 실행 중단")
+                    return "cancel", ""
+                if decision == "reuse":
+                    target = ws_id or default_reuse_id
+                    print(
+                        f"[GTMCreation] UI 응답: 재사용 workspace_id="
+                        f"{target or '(없음)'}"
+                    )
+                    return "reuse", target
+                # unknown → 기본: cancel 로 처리하는 게 안전
+                print(f"[GTMCreation] UI 응답 알 수 없음({decision}) → cancel 처리")
+                return "cancel", ""
+            time.sleep(1)
+        print("[GTMCreation] HITL 타임아웃 — 안전하게 실행 중단")
+        return "cancel", ""
+
+    # CLI 모드
+    print(
+        f"\n[GTMCreation] 워크스페이스 {current_count}/{limit} 가 가득 찼습니다."
+    )
+    if ai_workspaces:
+        print("재사용 후보 (gtm-ai-*):")
+        for w in ai_workspaces[:5]:
+            print(f"  - {w.get('name', '?')} (id={w.get('workspaceId', '?')})")
+    else:
+        print("gtm-ai-* 접두사 워크스페이스 없음 → 임의 기존 워크스페이스에 재사용 가능")
+
+    try:
+        ans = input("기존 작업공간을 재사용하시겠습니까? (y=재사용 / n=중단): ").strip().lower()
+    except EOFError:
+        print("[GTMCreation] 비대화형 모드 — 안전하게 중단 처리")
+        return "cancel", ""
+    if ans != "y":
+        return "cancel", ""
+    return "reuse", default_reuse_id
 
 
 def _sync_created_resources_ui(
@@ -79,49 +186,59 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
         existing_ws = client.list_workspaces()
         n_ws = len(existing_ws)
 
-        # 무료 컨테이너 워크스페이스 상한(3) — 꽉 찼으면 신규 생성 API를 호출하지 않고 재사용만 시도
+        # 무료 컨테이너 워크스페이스 상한(3) — 꽉 찼으면 사용자에게 HITL로 물어본다.
         if n_ws >= GTM_WORKSPACE_LIMIT:
             ai_ws = _sorted_ai_workspaces(existing_ws)
-            names_preview = ", ".join(
-                w.get("name", w.get("workspaceId", "?")) for w in existing_ws[:5]
-            )
             logger.info(
                 f"[GTMCreation] 워크스페이스 {n_ws}개(한도 {GTM_WORKSPACE_LIMIT}) — "
-                f"신규 생성 생략, gtm-ai-* 재사용 후보 {len(ai_ws)}개"
+                f"HITL로 재사용 여부 확인 (gtm-ai-* 후보 {len(ai_ws)}개)"
             )
+            decision, target_ws_id = _wait_for_workspace_decision(
+                hitl_mode=state.get("hitl_mode", "cli"),
+                workspaces=existing_ws,
+                ai_workspaces=ai_ws,
+                current_count=n_ws,
+                limit=GTM_WORKSPACE_LIMIT,
+            )
+            if decision == "cancel":
+                msg = (
+                    f"워크스페이스가 {n_ws}개로 가득 차 사용자가 실행을 중단했습니다. "
+                    "GTM에서 불필요한 작업공간을 삭제한 뒤 다시 시도해 주세요."
+                )
+                emit("hitl_decision", approved=False, feedback="workspace_full_cancel")
+                emit("node_exit", node_id=6, status="failed", duration_ms=0)
+                update_state(nodes_status={"gtm_creation": "failed"})
+                return {**state, "error": msg}
+
+            # reuse — target_ws_id 는 사용자가 고른 워크스페이스(없으면 ai_ws[0])
+            workspace_id = target_ws_id or (ai_ws[0]["workspaceId"] if ai_ws else "")
+            if not workspace_id:
+                msg = (
+                    "재사용할 수 있는 `gtm-ai-*` 또는 사용자 지정 워크스페이스가 없습니다. "
+                    "GTM에서 워크스페이스를 비우고 다시 시도해 주세요."
+                )
+                emit("hitl_decision", approved=False, feedback="workspace_full_no_target")
+                emit("node_exit", node_id=6, status="failed", duration_ms=0)
+                update_state(nodes_status={"gtm_creation": "failed"})
+                return {**state, "error": msg}
+            chosen_name = next(
+                (w.get("name", "") for w in existing_ws if w.get("workspaceId") == workspace_id),
+                "",
+            )
+            emit("hitl_decision", approved=True, feedback=f"reuse:{chosen_name or workspace_id}")
             emit(
                 "thought",
                 who="tool",
                 label="GTM Workspace",
                 text=(
-                    f"이 컨테이너는 워크스페이스가 이미 {n_ws}개(최대 {GTM_WORKSPACE_LIMIT})입니다. "
-                    "신규 작업공간은 만들지 않습니다. "
-                    + (
-                        f"기존 `gtm-ai-*` 중 최신({ai_ws[0].get('name', '')})에 설계안을 적용합니다."
-                        if ai_ws
-                        else (
-                            "이름이 `gtm-ai-`로 시작하는 작업공간이 없어 자동 재사용할 수 없습니다. "
-                            "GTM에서 워크스페이스를 비우거나 `gtm-ai-` 접두사 작업공간을 하나 만든 뒤 다시 실행하세요."
-                        )
-                    )
-                    + f"\n(현재 이름 일부: {names_preview})"
+                    f"사용자 승인 → 기존 작업공간 `{chosen_name or workspace_id}` 에 설계안을 적용합니다."
                 ),
                 kind="plain",
             )
-            if ai_ws:
-                workspace_id = ai_ws[0]["workspaceId"]
-                print(
-                    f"[GTMCreation] 한도 도달 → 기존 Workspace 재사용: "
-                    f"{ai_ws[0]['name']} (id={workspace_id})"
-                )
-            else:
-                err = (
-                    "워크스페이스가 3개로 가득 찼고, 재사용 가능한 `gtm-ai-*` 작업공간이 없습니다. "
-                    "GTM에서 불필요한 작업공간을 삭제하세요."
-                )
-                emit("node_exit", node_id=6, status="failed", duration_ms=0)
-                update_state(nodes_status={"gtm_creation": "failed"})
-                return {**state, "error": err}
+            print(
+                f"[GTMCreation] HITL 승인 → 기존 Workspace 재사용: "
+                f"{chosen_name or workspace_id} (id={workspace_id})"
+            )
 
         else:
             # 신규 Workspace 생성 — 실행마다 타임스탬프로 구분 (429 시 재시도 + fallback)

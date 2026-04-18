@@ -99,12 +99,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
 
             response_file = ROOT / "logs" / run_id / "hitl_response.json"
+            kind = (data.get("kind") or "plan").strip().lower()
             try:
-                response_file.write_text(
-                    json.dumps({
+                if kind == "workspace_full":
+                    payload = {
+                        "kind": "workspace_full",
+                        "decision": (data.get("decision") or "").strip().lower(),
+                        "workspace_id": data.get("workspace_id", ""),
+                    }
+                else:
+                    payload = {
+                        "kind": "plan",
                         "approved": bool(data.get("approved", True)),
                         "feedback": data.get("feedback", ""),
-                    }),
+                    }
+                response_file.write_text(
+                    json.dumps(payload, ensure_ascii=False),
                     encoding="utf-8",
                 )
                 self._json(200, {"ok": True})
