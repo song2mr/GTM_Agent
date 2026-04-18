@@ -107,4 +107,6 @@ config = {
 
 `serve_ui.py`는 `hitl_mode="file"`을 주입해 파일 기반 HITL을 활성화한다.
 
+GTM `workspaces.list` 결과가 상한(3)이고 `workspace_id`가 비어 있으면, **그래프 `ainvoke` 전**에 `agent/workspace_hitl.py`로 `workspace_full` HITL을 한 번 수행해 비용·시간 낭비를 막는다(`agent/nodes/CLAUDE.md`).
+
 노드별 OpenAI 채팅 모델은 **`config/llm_models.yaml`**에서 구역(zone) 키로 조정한다(`config/CLAUDE.md`, `agent/nodes/CLAUDE.md` 참고).

@@ -194,8 +194,10 @@ LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
 **Rate Limit(429)**: 최대 3회 재시도(30/60/90초), 실패 시 기존 `gtm-ai-*` workspace 재사용
 
 **Workspace 상한 HITL**:
+- `runner.py`: `workspaces.list` 로 개수를 알 수 있고 **≥ 3** 이고 Run 폼의 `workspace_id`가 비어 있으면, **LangGraph 실행 전**에 `agent.workspace_hitl.wait_for_workspace_full_decision` 으로 동일 UI HITL을 먼저 수행한다. 재사용이 확정되면 `initial_state["workspace_id"]`에 넣는다.
 - 워크스페이스 수 < 3 → `gtm-ai-{timestamp}` 신규 생성
-- 워크스페이스 수 ≥ 3 → 신규 생성 API를 **부르지 않고** 사용자에게 HITL 요청:
+- 워크스페이스 수 ≥ 3 이고 **state에 `workspace_id`가 이미 있음**(사전 HITL 또는 사용자 폼 입력) → Node 6에서 목록·HITL·신규 생성 **생략** 후 해당 ID로 Variable/Trigger/Tag 생성
+- 워크스페이스 수 ≥ 3 이고 `workspace_id` 없음(사전 목록 조회 실패 등으로 runner HITL을 못 한 경우) → Node 6에서만 아래와 같이 HITL 요청:
   - `emit("hitl_request", kind="workspace_full", workspaces=[...], default_reuse_id=..., current_count, limit)` 후 `nodes_status.gtm_creation="hitl_wait"`
   - `hitl_mode="file"`이면 `logs/{run_id}/hitl_response.json` 을 최대 5분 폴링. `{kind:"workspace_full", decision:"reuse", workspace_id}` 수신 시 해당 Workspace에 덮어쓰기, `decision:"cancel"` 또는 타임아웃이면 Node 6 `failed`로 종료하고 명확한 `error` 메시지를 돌려준다
   - CLI 모드에서는 재사용 후보(`gtm-ai-*`)를 출력하고 `y/n` 입력을 받는다 (비대화형·`n` → cancel)

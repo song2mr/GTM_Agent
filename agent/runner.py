@@ -11,6 +11,11 @@ from pathlib import Path
 
 from agent.graph import compile_graph
 from agent.state import GTMAgentState
+from agent.workspace_hitl import (
+    GTM_WORKSPACE_LIMIT,
+    sorted_ai_workspaces,
+    wait_for_workspace_full_decision,
+)
 from gtm.client import GTMClient
 from utils import logger
 from utils.ui_emitter import (
@@ -52,6 +57,7 @@ async def run_agent(config: dict) -> dict:
     run_id = Path(run_dir).name
 
     # GTM 컨테이너 사전 검증 (브라우저·LLM 탐색 전, 비용·시간 절약)
+    _preflight_workspaces: list[dict] | None = None
     try:
         preflight = GTMClient(account_id=account_id, container_id=container_id)
         resolved_container_id = preflight.verify_and_resolve_container_id()
@@ -61,18 +67,19 @@ async def run_agent(config: dict) -> dict:
                 f"{container_id!r} → {resolved_container_id!r}"
             )
             container_id = resolved_container_id
-        # 워크스페이스 3개 한도 — Node 6 동작(신규 생성 vs 재사용)을 미리 짐작할 수 있게만 로그
+        # 워크스페이스 목록(한도 시 그래프 전 HITL에 사용)
         try:
-            _n_ws = len(preflight.list_workspaces())
-            if _n_ws >= 3:
+            _preflight_workspaces = preflight.list_workspaces()
+            _n_ws = len(_preflight_workspaces)
+            if _n_ws >= GTM_WORKSPACE_LIMIT:
                 logger.info(
-                    f"[runner] GTM 워크스페이스 {_n_ws}개(상한 3) — "
-                    "Node 6 진입 시 `workspaces.list` 기준으로 한도면 HITL(Approvals)에서 "
-                    "재사용/중단을 묻습니다. UI에 안 뜨면 해당 Run의 run.log 에 "
-                    "`[GTMCreation] workspaces.list 개수=` 로 실제 API 개수를 확인하세요."
+                    f"[runner] GTM 워크스페이스 {_n_ws}개(상한 {GTM_WORKSPACE_LIMIT}) — "
+                    "그래프 시작 전에 Approvals에서 재사용/중단을 묻습니다(폼에 workspace_id가 "
+                    "이미 있으면 생략). Node 6에서는 같은 질문을 반복하지 않습니다."
                 )
         except Exception as _e_ws:
-            logger.info(f"[runner] 워크스페이스 개수 사전 확인 생략: {_e_ws}")
+            logger.info(f"[runner] 워크스페이스 목록 사전 조회 생략: {_e_ws}")
+            _preflight_workspaces = None
     except Exception as e:
         err = str(e)
         logger.info(f"[runner] GTM 컨테이너 사전 검증 실패: {err}")
@@ -150,6 +157,100 @@ async def run_agent(config: dict) -> dict:
         f"[runner] graph 준비 완료 run_id={run_id} tag_type={tag_type!r} "
         f"url_len={len(target_url)} req_len={len(user_request)}"
     )
+
+    # 워크스페이스 한도(3) + 미지정 시: 브라우저·LLM 탐색 전에 재사용/중단 HITL
+    if (
+        _preflight_workspaces is not None
+        and len(_preflight_workspaces) >= GTM_WORKSPACE_LIMIT
+        and not (workspace_id or "").strip()
+    ):
+        logger.info(
+            "[runner] 워크스페이스 한도 도달 — 그래프 전 workspace_full HITL 대기"
+        )
+        ai_ws = sorted_ai_workspaces(_preflight_workspaces)
+        decision, chosen_wid = wait_for_workspace_full_decision(
+            hitl_mode=hitl_mode,
+            workspaces=_preflight_workspaces,
+            ai_workspaces=ai_ws,
+            current_count=len(_preflight_workspaces),
+            limit=GTM_WORKSPACE_LIMIT,
+            mark_gtm_node_hitl_wait=False,
+            log_prefix="[runner]",
+        )
+        if decision == "cancel":
+            msg = (
+                f"워크스페이스가 {len(_preflight_workspaces)}개로 가득 차 "
+                "실행 시작 전에 사용자가 중단했습니다."
+            )
+            emit("hitl_decision", approved=False, feedback="workspace_full_cancel_preflight")
+            emit("run_end", report_path=None, duration_ms=0, token_usage={})
+            update_state(
+                status="failed",
+                current_node=0,
+                error=msg,
+            )
+            try:
+                write_history_index(Path(run_dir).parent)
+            except Exception:
+                pass
+            return {
+                "run_id": run_id,
+                "user_request": user_request,
+                "target_url": target_url,
+                "tag_type": tag_type,
+                "account_id": account_id,
+                "container_id": container_id,
+                "workspace_id": workspace_id,
+                "measurement_id": measurement_id,
+                "error": msg,
+            }
+        if not chosen_wid:
+            msg = "재사용할 워크스페이스가 지정되지 않았습니다."
+            emit("hitl_decision", approved=False, feedback="workspace_full_no_target_preflight")
+            emit("run_end", report_path=None, duration_ms=0, token_usage={})
+            update_state(status="failed", current_node=0, error=msg)
+            try:
+                write_history_index(Path(run_dir).parent)
+            except Exception:
+                pass
+            return {
+                "run_id": run_id,
+                "user_request": user_request,
+                "target_url": target_url,
+                "tag_type": tag_type,
+                "account_id": account_id,
+                "container_id": container_id,
+                "workspace_id": "",
+                "measurement_id": measurement_id,
+                "error": msg,
+            }
+        chosen_name = next(
+            (
+                w.get("name", "")
+                for w in _preflight_workspaces
+                if w.get("workspaceId") == chosen_wid
+            ),
+            "",
+        )
+        workspace_id = chosen_wid
+        emit(
+            "hitl_decision",
+            approved=True,
+            feedback=f"reuse_preflight:{chosen_name or workspace_id}",
+        )
+        emit(
+            "thought",
+            who="tool",
+            label="GTM Workspace",
+            text=(
+                f"실행 시작 전 사용자 승인 → 작업공간 `{chosen_name or workspace_id}` "
+                "에 이후 설계안을 적용합니다."
+            ),
+            kind="plain",
+        )
+        logger.info(
+            f"[runner] 사전 HITL 완료 → workspace_id={workspace_id!r} 로 그래프 시작"
+        )
 
     initial_state: GTMAgentState = {
         "user_request": user_request,
