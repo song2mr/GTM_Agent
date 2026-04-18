@@ -65,6 +65,12 @@ publish_version(version_id) -> dict
 2. 존재하면 `update` 호출 (덮어쓰기)
 3. 없으면 `create` 호출
 
+### Workspace 한도 초과
+
+GTM 무료 계정은 워크스페이스를 최대 3개까지만 허용한다.
+`create_workspace`는 생성 전에 현재 수를 확인하고, 한도에 도달하면 자동 삭제 없이
+현재 워크스페이스 목록을 포함한 `RuntimeError`를 던진다 — 삭제는 사용자가 직접 한다.
+
 ### Rate Limit (429)
 
 GTM API는 분당 요청 수 제한이 있다. `gtm_creation.py`에서 3회 재시도 로직으로 처리.

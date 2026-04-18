@@ -18,6 +18,10 @@ React + Babel CDN 기반 단일 페이지 UI. 빌드 없이 `serve_ui.py`가 정
 **로드 순서**: `api.jsx` → `ui.jsx` → `screens.jsx` → `app.jsx`
 순서를 바꾸면 전역 변수 참조 오류 발생.
 
+**컴포넌트 정의 위치 주의**: 컴포넌트 함수를 다른 컴포넌트 렌더 함수 **내부**에서 선언하면
+상태 변경 시마다 React가 새 타입으로 인식해 DOM을 unmount/remount한다 → input 포커스 소실.
+재사용 컴포넌트는 반드시 모듈 최상위 레벨에 정의하고, 필요한 state는 prop으로 전달한다.
+
 ---
 
 ## 데이터 흐름

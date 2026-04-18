@@ -101,8 +101,8 @@ function RunStartScreen({ onStart }) {
                        value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} />
               </div>
               <div className="field">
-                <label>GA4 MEASUREMENT ID (선택)</label>
-                <input className="input mono" placeholder="G-XXXXXXXX"
+                <label>매체 트래킹 ID (선택)</label>
+                <input className="input mono" placeholder="G-XXXXXXXX / 픽셀 ID / 계정 ID"
                        value={measurementId} onChange={e => setMeasurementId(e.target.value)} />
               </div>
             </div>
@@ -706,7 +706,21 @@ function ReportScreen({ runId }) {
 }
 
 // ── 7. Workspace Management ─────────────────────────────────────────────
-const EMPTY_FORM = { name: "", accountId: "", containerId: "", gtmWorkspaceId: "", measurementId: "", defaultUrl: "" };
+const EMPTY_FORM = { name: "", accountId: "", containerId: "", gtmWorkspaceId: "", defaultUrl: "" };
+
+function WsField({ label, field, placeholder, mono, form, setForm }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <input
+        className={`input${mono ? " mono" : ""}`}
+        placeholder={placeholder}
+        value={form[field]}
+        onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
+      />
+    </div>
+  );
+}
 
 function WorkspaceScreen() {
   const { workspaces, activeId, add, update, remove, setActive } = window.useWorkspaces();
@@ -735,20 +749,7 @@ function WorkspaceScreen() {
 
   const handleActivate = (id) => {
     setActive(id);
-    // gtm:config 반영됐음을 알림
   };
-
-  const Field = ({ label, field, placeholder, mono }) => (
-    <div className="field">
-      <label>{label}</label>
-      <input
-        className={`input${mono ? " mono" : ""}`}
-        placeholder={placeholder}
-        value={form[field]}
-        onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))}
-      />
-    </div>
-  );
 
   return (
     <div className="page">
@@ -770,12 +771,11 @@ function WorkspaceScreen() {
           </div>
           <div className="panel-body" style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <Field label="이름" field="name" placeholder="예: Lee Korea (prod)" />
-              <Field label="기본 URL" field="defaultUrl" placeholder="https://shop.example.com" mono />
-              <Field label="GTM Account ID" field="accountId" placeholder="6123847219" mono />
-              <Field label="GTM Container ID" field="containerId" placeholder="GTM-XXXXXXX" mono />
-              <Field label="GTM Workspace ID (선택)" field="gtmWorkspaceId" placeholder="비워두면 자동 생성" mono />
-              <Field label="GA4 Measurement ID (선택)" field="measurementId" placeholder="G-XXXXXXXX" mono />
+              <WsField label="이름" field="name" placeholder="예: Lee Korea (prod)" form={form} setForm={setForm} />
+              <WsField label="기본 URL" field="defaultUrl" placeholder="https://shop.example.com" mono form={form} setForm={setForm} />
+              <WsField label="GTM Account ID" field="accountId" placeholder="6123847219" mono form={form} setForm={setForm} />
+              <WsField label="GTM Container ID" field="containerId" placeholder="GTM-XXXXXXX" mono form={form} setForm={setForm} />
+              <WsField label="GTM Workspace ID (선택)" field="gtmWorkspaceId" placeholder="비워두면 자동 생성" mono form={form} setForm={setForm} />
             </div>
             {error ? <div style={{ color: "var(--danger)", fontSize: 12.5 }}>{error}</div> : null}
             <div className="row tight" style={{ justifyContent: "flex-end" }}>
@@ -823,12 +823,11 @@ function WorkspaceScreen() {
               {isEditing ? (
                 <div style={{ display: "grid", gap: 12, padding: "0 0 4px" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <Field label="이름" field="name" placeholder="예: Lee Korea (prod)" />
-                    <Field label="기본 URL" field="defaultUrl" placeholder="https://shop.example.com" mono />
-                    <Field label="GTM Account ID" field="accountId" placeholder="6123847219" mono />
-                    <Field label="GTM Container ID" field="containerId" placeholder="GTM-XXXXXXX" mono />
-                    <Field label="GTM Workspace ID (선택)" field="gtmWorkspaceId" placeholder="비워두면 자동 생성" mono />
-                    <Field label="GA4 Measurement ID (선택)" field="measurementId" placeholder="G-XXXXXXXX" mono />
+                    <WsField label="이름" field="name" placeholder="예: Lee Korea (prod)" form={form} setForm={setForm} />
+                    <WsField label="기본 URL" field="defaultUrl" placeholder="https://shop.example.com" mono form={form} setForm={setForm} />
+                    <WsField label="GTM Account ID" field="accountId" placeholder="6123847219" mono form={form} setForm={setForm} />
+                    <WsField label="GTM Container ID" field="containerId" placeholder="GTM-XXXXXXX" mono form={form} setForm={setForm} />
+                    <WsField label="GTM Workspace ID (선택)" field="gtmWorkspaceId" placeholder="비워두면 자동 생성" mono form={form} setForm={setForm} />
                   </div>
                   {error ? <div style={{ color: "var(--danger)", fontSize: 12.5 }}>{error}</div> : null}
                   <div className="row tight" style={{ justifyContent: "flex-end" }}>
@@ -839,7 +838,6 @@ function WorkspaceScreen() {
                 <div className="ws-meta">
                   <span className="chip mono">{ws.accountId || "—"}</span>
                   <span className="chip mono">{ws.containerId || "—"}</span>
-                  {ws.measurementId ? <span className="chip mono accent">{ws.measurementId}</span> : null}
                   {ws.defaultUrl ? (
                     <span className="muted-mono" style={{ fontSize: 12, color: "var(--ink-3)" }}>{ws.defaultUrl}</span>
                   ) : null}

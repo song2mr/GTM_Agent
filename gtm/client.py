@@ -63,31 +63,39 @@ class GTMClient:
 
     def create_workspace(self, name: str = "gtm-ai-workspace") -> dict:
         """이전 gtm-ai-* Workspace를 정리하고 신규 Workspace를 생성합니다."""
-        # 기존 gtm-ai-* Workspace 삭제 (최대 3개까지만 유지하여 Rate Limit 방지)
+        GTM_WORKSPACE_LIMIT = 3  # GTM 무료 계정 최대 워크스페이스 수
+
         try:
             workspaces = self.list_workspaces()
-            ai_workspaces = sorted(
-                [w for w in workspaces if w.get("name", "").startswith("gtm-ai-")],
-                key=lambda w: w.get("workspaceId", "0"),
-            )
-            # 가장 오래된 것부터 삭제 (최근 2개만 남김)
-            for old_ws in ai_workspaces[:-2] if len(ai_workspaces) > 2 else []:
-                try:
-                    self.delete_workspace(old_ws["workspaceId"])
-                    print(f"[GTMClient] 이전 Workspace 정리: {old_ws['name']} (id={old_ws['workspaceId']})")
-                except Exception as e:
-                    print(f"[GTMClient] Workspace 삭제 실패 (무시): {e}")
+            if len(workspaces) >= GTM_WORKSPACE_LIMIT:
+                names = ", ".join(w.get("name", w.get("workspaceId", "?")) for w in workspaces)
+                raise RuntimeError(
+                    f"GTM 워크스페이스가 최대 {GTM_WORKSPACE_LIMIT}개로 꽉 찼습니다. "
+                    f"현재 워크스페이스: {names}. "
+                    "GTM 콘솔에서 불필요한 워크스페이스를 삭제한 뒤 다시 시도해 주세요."
+                )
+        except RuntimeError:
+            raise
         except Exception as e:
             print(f"[GTMClient] Workspace 목록 조회 실패 (무시): {e}")
 
         body = {"name": name, "description": "Created by GTM AI Agent"}
-        result = (
-            self._service.accounts()
-            .containers()
-            .workspaces()
-            .create(parent=self._container_path(), body=body)
-            .execute()
-        )
+        try:
+            result = (
+                self._service.accounts()
+                .containers()
+                .workspaces()
+                .create(parent=self._container_path(), body=body)
+                .execute()
+            )
+        except HttpError as e:
+            if e.resp.status in (400, 403):
+                raise RuntimeError(
+                    f"GTM 워크스페이스 생성 실패 (HTTP {e.resp.status}): "
+                    "워크스페이스 한도 초과이거나 권한이 없습니다. "
+                    "GTM 콘솔에서 불필요한 워크스페이스를 삭제해 주세요."
+                ) from e
+            raise
         return result
 
     def get_workspace(self, workspace_id: str) -> dict:
