@@ -39,3 +39,16 @@ naver_analytics:
 3. `docs/CLAUDE.md` 매체 목록 업데이트
 
 URL이 변경되면 `media_sources.yaml`만 수정하면 된다 — 코드 변경 불필요.
+
+---
+
+## exploration_limits.yaml
+
+탐색 **전용 노드**에서 LLM이 시도할 수 있는 **최대 스텝 수** 등을 조절한다.
+
+- `cart_addition.max_llm_steps` → Node 3.25 `CartAdditionNavigator`
+- `begin_checkout.max_llm_steps` → Node 3.5 `BeginCheckoutNavigator`
+
+로더: `config/exploration_limits_loader.py` (`read_exploration_limits`, `cart_addition_max_llm_steps`, `begin_checkout_max_llm_steps`).
+
+YAML 파일이 없으면 기본값 8이 적용된다.

@@ -11,7 +11,9 @@ Playwright 기반 브라우저 자동화 레이어.
 |------|------|
 | `listener.py` | dataLayer Persistent Event Listener 주입·조회·진단 |
 | `navigator.py` | LLM Navigator 루프 (이벤트별 탐색 전략) |
-| `actions.py` | click / navigate / scroll / form_fill 액션 래퍼 |
+| `cart_addition_navigator.py` | 장바구니 담기 전용 Navigator (스텝 상한은 `config/exploration_limits.yaml`) |
+| `begin_checkout_navigator.py` | 결제 시작 전용 Navigator (동일) |
+| `actions.py` | click / navigate / scroll / form_fill / **select_option** / **set_location_hash** 래퍼 |
 
 ---
 

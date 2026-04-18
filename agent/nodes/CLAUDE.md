@@ -49,7 +49,9 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 **역할**: 탐색 이벤트 큐 생성 + auto_capturable / manual_required 분류
 
 **입력**: `user_request`, `page_type`, `datalayer_status`
-**출력**: `exploration_queue`, `auto_capturable`, `manual_required`
+**출력**: `exploration_queue`, `auto_capturable`, `cart_addition_events`, `begin_checkout_events`, `manual_required`
+
+- `cart_addition_events` / `begin_checkout_events`: LLM이 JSON으로 지정(이름은 `exploration_queue`와 동일). 필드 누락 시 `agent/commerce_events.py`의 `fallback_cart_addition_events` / `fallback_begin_checkout_events`로 GA4 기본명만 폴백.
 
 **분류 기준**
 ```python
@@ -64,10 +66,11 @@ MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
 
 ## Node 3 — `active_explorer.py`
 
-**역할**: LLM Navigator + Playwright 루프로 이벤트 캡처 (시스템 핵심)
+**역할**: LLM Navigator + Playwright 루프로 이벤트 캡처 (시스템 핵심).  
+`cart_addition_events`·`begin_checkout_events`에 포함된 이름은 **여기서 스킵**하고 전용 노드(3.25 / 3.5)에서만 처리한다.
 
-**입력**: `exploration_queue`, `auto_capturable`, `current_url`, `page_type`
-**출력**: `captured_events`, `event_capture_log`, `manual_required`(갱신), `current_url`
+**입력**: `exploration_queue`, `auto_capturable`, `cart_addition_events`, `begin_checkout_events`, `current_url`, `page_type`
+**출력**: `captured_events`, `event_capture_log`, `manual_required`(갱신), `current_url`(탐색 종료 시점 `page.url`)
 
 **이벤트 캡처 우선순위 (반드시 이 순서)**
 1. dataLayer 직접 캡처 (`window.__gtm_captured`)
@@ -93,18 +96,33 @@ DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(C
 
 **로그(멈춤 추적)**: `run.log`에 `[ActiveExplorer] Playwright headless=…`, Navigator 루프의 `[Navigator] run_for_event …` / `decide_next_action …` / `LLM ainvoke …` / `액션 실행 끝 …` 및 `browser/actions.get_page_snapshot`의 `[Snapshot] page.content() …`·`완료`·`타임아웃`이 순서대로 찍힌다(스냅샷은 `page.content()` 30초 상한).
 
-**UI 동기화**: `manual_required`가 비어 있으면 Manual Capture 노드는 그래프에서 호출되지 않으므로, 탐색 종료 시 `nodes_status={"manual_capture": "skip"}`를 기록한다.
+**UI 동기화**: `manual_required`가 비어 있고 **`cart_addition_events`·`begin_checkout_events`도 비어 있을 때만** Node 3 종료 시 `manual_capture`를 `skip`한다(뒤에 전용 탐색 노드가 올 수 있음).
 
-**event_capture_log 항목 구조**
-```python
-{
-    "event": str,
-    "method": str,      # "datalayer" | "click_datalayer" | "dom_extraction" | "manual" | "skipped"
-    "success": bool,
-    "data": dict,       # 캡처된 파라미터
-    "note": str,        # 특이사항
-}
-```
+---
+
+## Node 3.25 — `cart_addition_explorer.py`
+
+**역할**: 장바구니·바스켓 담기 계열 이벤트만 **별도 브라우저 세션**으로 재개해 `CartAdditionNavigator`(+ `select_option` / `set_hash` 액션)로 캡처.
+
+**입력**: `cart_addition_events`, `current_url`(Node 3 종료 시 PDP 등), `click_triggers`, `dom_selectors`, `extraction_method`
+**출력**: `captured_events`, `event_capture_log`, `manual_required` 갱신
+
+**우선순위**: (1) 해당 이벤트명의 `click_triggers` 클릭 후 dataLayer (2) `browser/cart_addition_navigator.py` (3) DOM 폴백 (4) Manual
+
+**그래프**: `active_explorer` → (큐가 비어 있지 않으면) 본 노드 → (`begin_checkout_events` 있으면 Node 3.5) → `manual_capture` 또는 `planning`.
+
+---
+
+## Node 3.5 — `begin_checkout_explorer.py`
+
+**역할**: `begin_checkout_events`에 넣은 결제 시작 계열만 **별도 브라우저 세션**으로 `BeginCheckoutNavigator`로 캡처.
+
+**입력**: `begin_checkout_events`, `current_url`, `click_triggers`, `dom_selectors`, `extraction_method`  
+**출력**: `captured_events`, `event_capture_log`, `manual_required` 갱신
+
+**우선순위**: Cart Addition과 동일 패턴(클릭 트리거 → 전용 Navigator → DOM 폴백 → Manual).
+
+**그래프**: `cart_addition_explorer`(또는 Node 3에서 직접) 이후 조건부 진입 → `manual_capture` 또는 `planning`.
 
 ---
 

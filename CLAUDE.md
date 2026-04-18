@@ -30,7 +30,9 @@ gtm_ai/
 ├── docs/
 │   └── CLAUDE.md              ← 문서 fetch 전략, 폴백 처리
 ├── config/
-│   └── CLAUDE.md              ← media_sources.yaml 포맷, 매체 추가 방법
+│   ├── CLAUDE.md              ← media_sources, exploration_limits 등 설정
+│   ├── exploration_limits.yaml  ← 전용 탐색 노드 LLM 스텝 상한
+│   └── exploration_limits_loader.py
 └── ui/
     └── CLAUDE.md              ← UI 아키텍처, 훅, 화면 구성, 데이터 흐름
 ```

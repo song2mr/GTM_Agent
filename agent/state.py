@@ -29,6 +29,10 @@ class GTMAgentState(TypedDict):
     # ── Node 2: Journey Planner ─────────────────────────────────────────────
     exploration_queue: list     # 탐색할 이벤트 목록 (순서 있음)
     auto_capturable: list       # 자동 캡처 가능 이벤트
+    # 장바구니 담기 계열 → Node 3.25 전용 (이벤트명은 Journey Planner가 지정)
+    cart_addition_events: list
+    # 결제 시작 계열 → Node 3.5 전용
+    begin_checkout_events: list
     manual_required: list       # 수동 캡처 필요 이벤트 (purchase, refund 등)
 
     # ── Node 3: Active Explorer ─────────────────────────────────────────────

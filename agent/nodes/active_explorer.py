@@ -137,7 +137,12 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
             for e in initial_events:
                 if e not in captured_events:
                     captured_events.append(e)
-            
+
+            try:
+                live_page_url = page.url
+            except Exception:
+                live_page_url = target_url
+
             # DOM 모드: 페이지 로드 시 page_view + 현재 데이터 바로 추출
             if use_dom and dom_selectors:
                 dom_data = await _extract_dom_data(page, dom_selectors)
@@ -154,7 +159,20 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                         "notes": f"dataLayer 미사용 사이트, DOM 직접 추출 (필드: {list(dom_data.keys())})",
                     })
             
+            deferred = set(state.get("cart_addition_events") or []) | set(
+                state.get("begin_checkout_events") or []
+            )
+
             for target_event in auto_capturable:
+                if target_event in deferred:
+                    exploration_log.append(
+                        f"{target_event}: 전용 탐색 노드로 이월 (Active Explorer 스킵)"
+                    )
+                    logger.info(
+                        f"[ActiveExplorer] {target_event} → cart_addition / begin_checkout 전용 처리"
+                    )
+                    continue
+
                 already_captured = any(
                     e.get("data", {}).get("event") == target_event
                     for e in captured_events
@@ -172,6 +190,10 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                     continue
             
                 logger.info(f"[ActiveExplorer] 목표 이벤트: {target_event}")
+                try:
+                    live_page_url = page.url
+                except Exception:
+                    pass
             
                 # ── 우선순위 1: 클릭 트리거 → 클릭 후 dataLayer 먼저 확인 (DL/DOM 무관) ──
                 if target_event in click_triggers:
@@ -349,14 +371,19 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     emit("node_exit", node_id=3, status="done", duration_ms=_dur)
     update_state(nodes_status={"active_explorer": "done"})
     # Manual Capture 노드는 그래프에서 건너뛰면 실행·emit이 없어 queued로 남음 → UI에서 skip 표시
-    if not manual_required:
+    # 장바구니 전용 노드가 뒤에서 더 붙을 수 있으면 여기서 manual_capture 스킵하지 않음
+    if (
+        not manual_required
+        and not state.get("cart_addition_events")
+        and not state.get("begin_checkout_events")
+    ):
         update_state(nodes_status={"manual_capture": "skip"})
 
     return {
         **state,
         "captured_events": captured_events,
         "manual_required": manual_required,
-        "current_url": target_url,
+        "current_url": live_page_url,
         "exploration_log": exploration_log,
         "event_capture_log": event_capture_log,
     }

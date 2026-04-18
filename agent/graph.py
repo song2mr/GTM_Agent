@@ -1,6 +1,6 @@
 """LangGraph StateGraph 정의.
 
-Node 1 → 1.5(조건부) → 2 → 3 → (4) → 5 → 6 → 7 → 8 순서로 실행됩니다.
+Node 1 → 1.5(조건부) → 2 → 3 → 3.25(조건부) → 3.5(조건부) → (4) → 5 → 6 → 7 → 8 순서로 실행됩니다.
 - dataLayer가 불완전하면 Node 1.5 Structure Analyzer를 실행합니다.
 - manual_required 이벤트 유무에 따라 Node 4를 조건부로 실행합니다.
 - Node 8 Reporter는 항상 마지막에 실행됩니다 (오류 경로 포함).
@@ -11,6 +11,8 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from agent.nodes.active_explorer import active_explorer
+from agent.nodes.begin_checkout_explorer import begin_checkout_explorer
+from agent.nodes.cart_addition_explorer import cart_addition_explorer
 from agent.nodes.gtm_creation import gtm_creation
 from agent.nodes.journey_planner import journey_planner
 from agent.nodes.manual_capture import manual_capture
@@ -20,6 +22,8 @@ from agent.nodes.publish import publish
 from agent.nodes.reporter import reporter
 from agent.nodes.structure_analyzer import structure_analyzer
 from agent.orchestrator import (
+    route_after_active_explorer,
+    route_after_cart_addition,
     route_after_classifier,
     route_after_creation,
     route_after_explorer,
@@ -37,6 +41,8 @@ def build_graph() -> StateGraph:
     graph.add_node("structure_analyzer", structure_analyzer)
     graph.add_node("journey_planner", journey_planner)
     graph.add_node("active_explorer", active_explorer)
+    graph.add_node("cart_addition_explorer", cart_addition_explorer)
+    graph.add_node("begin_checkout_explorer", begin_checkout_explorer)
     graph.add_node("manual_capture", manual_capture)
     graph.add_node("planning", planning)
     graph.add_node("gtm_creation", gtm_creation)
@@ -61,6 +67,25 @@ def build_graph() -> StateGraph:
     # Node 3 → Node 4(조건부) → Node 5
     graph.add_conditional_edges(
         "active_explorer",
+        route_after_active_explorer,
+        {
+            "cart_addition_explorer": "cart_addition_explorer",
+            "begin_checkout_explorer": "begin_checkout_explorer",
+            "manual_capture": "manual_capture",
+            "planning": "planning",
+        },
+    )
+    graph.add_conditional_edges(
+        "cart_addition_explorer",
+        route_after_cart_addition,
+        {
+            "begin_checkout_explorer": "begin_checkout_explorer",
+            "manual_capture": "manual_capture",
+            "planning": "planning",
+        },
+    )
+    graph.add_conditional_edges(
+        "begin_checkout_explorer",
         route_after_explorer,
         {
             "manual_capture": "manual_capture",

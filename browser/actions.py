@@ -81,6 +81,57 @@ async def scroll(
         return ActionResult(success=False, error=f"스크롤 실패: {e}")
 
 
+async def select_option(
+    page: Page, selector: str, value: str, timeout: int = 8000
+) -> ActionResult:
+    """native <select>에 값을 선택하고 input/change를 한 번 더 보냅니다 (카페24 등)."""
+    emit(
+        "thought",
+        who="tool",
+        label="playwright.select_option",
+        text=f"{selector} = {value!r}",
+        kind="tool",
+    )
+    try:
+        loc = page.locator(selector).first
+        await loc.wait_for(state="attached", timeout=timeout)
+        await loc.scroll_into_view_if_needed(timeout=timeout)
+        await loc.select_option(value, timeout=timeout)
+        handle = await loc.element_handle()
+        if handle:
+            await page.evaluate(
+                """(el) => {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }""",
+                handle,
+            )
+        return ActionResult(success=True, message=f"옵션 선택: {selector} = {value!r}")
+    except PWTimeoutError:
+        return ActionResult(
+            success=False,
+            error=f"타임아웃: select 옵션 실패 — {selector} = {value!r}",
+        )
+    except Exception as e:
+        return ActionResult(success=False, error=f"옵션 선택 실패: {e}")
+
+
+async def set_location_hash(page: Page, hash_fragment: str) -> ActionResult:
+    """앵커/탭 전환용 location.hash 설정 (# 없이 fragment만, 예: cart_tab_option)."""
+    frag = (hash_fragment or "").strip().lstrip("#")
+    emit("thought", who="tool", label="playwright.hash", text=f"#{frag}", kind="tool")
+    try:
+        await page.evaluate(
+            """(f) => {
+                if (f) window.location.hash = '#' + f;
+            }""",
+            frag,
+        )
+        return ActionResult(success=True, message=f"hash 설정: #{frag}")
+    except Exception as e:
+        return ActionResult(success=False, error=f"hash 설정 실패: {e}")
+
+
 async def form_fill(
     page: Page, selector: str, value: str, timeout: int = 5000
 ) -> ActionResult:

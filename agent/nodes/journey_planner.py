@@ -13,6 +13,10 @@ from langchain_openai import ChatOpenAI
 
 import time
 
+from agent.commerce_events import (
+    fallback_begin_checkout_events,
+    fallback_cart_addition_events,
+)
 from agent.state import GTMAgentState
 from utils import token_tracker
 from utils.ui_emitter import emit, update_state
@@ -31,8 +35,23 @@ _PLANNER_SYSTEM = """당신은 GTM 이벤트 탐색 전략가입니다.
 다음 JSON 형식으로만 응답하세요:
 {
   "exploration_queue": ["이벤트1", "이벤트2", ...],
+  "cart_addition_events": ["큐에 있는 이름 중", "장바구니 담기 전용 절차를 탈 이벤트"],
+  "begin_checkout_events": ["큐에 있는 이름 중", "결제 시작 전용 절차를 탈 이벤트"],
   "reasoning": "탐색 순서 선택 이유"
 }
+
+**cart_addition_events (필수)**  
+- PDP에서 **옵션 선택 → 담기 버튼** 같은 무거운 UI 절차가 필요한 이벤트만 넣는다.
+- **반드시 `exploration_queue`에 등장한 문자열과 동일한 이름**만 사용한다(추측·변형 금지).
+- 사용자 요청·태그 유형(GA4 / 네이버 / 메타 / 크리테오 등)을 읽고, "장바구니에 담기·Add to cart·카트" 등 **의미상 그 행동**에 해당하는 이벤트명을 골라 넣는다.
+  예: 큐에 `add_to_cart`만 있으면 `["add_to_cart"]`, 사용자가 `custom_cart_push`를 달라고 했으면 그 이름이 큐에 있을 때만 `["custom_cart_push"]`.
+- 해당 계열이 없으면 **빈 배열 `[]`**.
+- **이름 패턴(add2cart 등)으로 추측하지 말고**, 요청·태그 문맥으로 판단한다.
+
+**begin_checkout_events (필수)**  
+- 장바구니 → 주문서 → **구매하기/결제하기** 등 **여러 단계·레이어**가 필요한 “결제 시작” 계열만 넣는다.
+- **반드시 `exploration_queue`에 등장한 문자열과 동일한 이름**만 사용한다.
+- 사용자 요청·태그 유형을 읽고 의미상 결제 진입에 해당하는 이벤트명을 고른다. 없으면 **[]**.
 
 == GA4 표준 이벤트 ==
 - page_view: 모든 페이지 로드 시
@@ -60,6 +79,11 @@ _PLANNER_SYSTEM = """당신은 GTM 이벤트 탐색 전략가입니다.
 3. add_to_cart는 view_item 다음에 (PDP에서 연속 캡처 가능)
 4. add_to_wishlist는 add_to_cart와 같은 PDP/PLP에서 캡처 가능하므로 인접 배치
 5. 자동화 불가 이벤트(purchase, refund)는 큐에서 제외
+
+== 탐색 전용 노드 ==
+- `cart_addition_events` → Node 3.25 (옵션·담기 UI)
+- `begin_checkout_events` → Node 3.5 (장바구니·주문서·결제 진입)
+- 위 배열에 없는 이벤트는 일반 Active Explorer(Node 3)가 처리한다.
 """
 
 
@@ -81,7 +105,9 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
                 f"페이지 타입: {page_type}\n"
                 f"현재 URL: {current_url}\n"
                 f"사용자 요청: {user_request}\n"
-                f"태그 유형: {tag_type}"
+                f"태그 유형: {tag_type}\n\n"
+                "JSON에 cart_addition_events, begin_checkout_events를 반드시 포함하세요(해당 없으면 []). "
+                "각 배열의 이름은 exploration_queue에 나온 문자열과 **완전히 동일**해야 합니다."
             )
         ),
     ]
@@ -98,13 +124,37 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
     try:
         result = json.loads(raw)
         queue: list[str] = result.get("exploration_queue", [])
+        planner_cart: object = result.get("cart_addition_events", None)
+        planner_begin: object = result.get("begin_checkout_events", None)
     except json.JSONDecodeError:
         print(f"[JourneyPlanner] JSON 파싱 실패, 기본 큐 사용")
+        result = {}
+        planner_cart = None
+        planner_begin = None
         queue = _default_queue(page_type, user_request)
 
     # purchase/refund만 manual_required — 나머지는 모두 auto_capturable
     # (add_to_wishlist 등 커스텀 이벤트 포함)
     auto_capturable = [e for e in queue if e not in MANUAL_REQUIRED_EVENTS]
+    ac_set = set(auto_capturable)
+    if isinstance(planner_cart, list):
+        cart_addition_events = [
+            e.strip()
+            for e in planner_cart
+            if isinstance(e, str) and e.strip() in ac_set
+        ]
+    else:
+        cart_addition_events = fallback_cart_addition_events(auto_capturable)
+
+    if isinstance(planner_begin, list):
+        begin_checkout_events = [
+            e.strip()
+            for e in planner_begin
+            if isinstance(e, str) and e.strip() in ac_set
+        ]
+    else:
+        begin_checkout_events = fallback_begin_checkout_events(auto_capturable)
+
     manual_required = [e for e in queue if e in MANUAL_REQUIRED_EVENTS]
 
     # 사용자 요청에 purchase/refund가 명시된 경우 manual_required에 추가
@@ -114,10 +164,22 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
 
     print(f"[JourneyPlanner] 탐색 큐: {queue}")
     print(f"[JourneyPlanner] 자동 캡처: {auto_capturable}")
+    print(f"[JourneyPlanner] 장바구니 담기 전용: {cart_addition_events}")
+    print(f"[JourneyPlanner] 결제 시작 전용: {begin_checkout_events}")
     print(f"[JourneyPlanner] 수동 캡처 필요: {manual_required}")
 
-    emit("thought", who="agent", label="JourneyPlanner",
-         text=f"탐색 큐: {queue}\n자동 캡처: {auto_capturable}\nManual 필요: {manual_required}")
+    emit(
+        "thought",
+        who="agent",
+        label="JourneyPlanner",
+        text=(
+            f"탐색 큐: {queue}\n"
+            f"자동 캡처: {auto_capturable}\n"
+            f"장바구니 담기 전용: {cart_addition_events}\n"
+            f"결제 시작 전용: {begin_checkout_events}\n"
+            f"Manual 필요: {manual_required}"
+        ),
+    )
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=2, status="done", duration_ms=_dur)
     update_state(nodes_status={"journey_planner": "done"})
@@ -126,6 +188,8 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
         **state,
         "exploration_queue": queue,
         "auto_capturable": auto_capturable,
+        "cart_addition_events": cart_addition_events,
+        "begin_checkout_events": begin_checkout_events,
         "manual_required": manual_required,
         "exploration_log": state.get("exploration_log", [])
         + [f"탐색 큐 생성: {queue}"],

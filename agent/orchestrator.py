@@ -21,6 +21,22 @@ def route_after_classifier(state: GTMAgentState) -> str:
     return "structure_analyzer"
 
 
+def route_after_active_explorer(state: GTMAgentState) -> str:
+    """Active Explorer 직후: 장바구니 담기 전용 노드가 있으면 먼저 실행."""
+    if state.get("cart_addition_events"):
+        return "cart_addition_explorer"
+    if state.get("begin_checkout_events"):
+        return "begin_checkout_explorer"
+    return route_after_explorer(state)
+
+
+def route_after_cart_addition(state: GTMAgentState) -> str:
+    """Cart Addition 이후: 결제 시작 전용 노드가 있으면 실행."""
+    if state.get("begin_checkout_events"):
+        return "begin_checkout_explorer"
+    return route_after_explorer(state)
+
+
 def route_after_explorer(state: GTMAgentState) -> str:
     """Active Explorer 이후 라우팅.
 
