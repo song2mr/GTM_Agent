@@ -76,8 +76,10 @@ MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
 DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(Click Trigger)로 자동 구분.
 
 **Navigator 루프**
-- 최대 3회 재시도 후 실패 시 manual로 전환
-- `EVENT_CAPTURE_GUIDE` 딕셔너리로 이벤트별 탐색 힌트 관리
+- `MAX_STEPS=8` 멀티스텝 탐색. 재시도가 아닌 스텝 진행 개념
+- `LLMNavigator._action_history`에 세션 전체 액션 누적 — 이벤트 간 리셋 없음
+- LLM이 히스토리를 보고 "현재 어느 단계인지" 스스로 판단해 다음 액션 결정
+- `EVENT_CAPTURE_GUIDE`는 "어떤 조건이 충족되어야 발화되는가" 목표 중심으로 서술
 - 클릭 실패·타임아웃은 `ActionResult.success=False`로 처리, 예외 미발생
 
 **event_capture_log 항목 구조**

@@ -1,7 +1,7 @@
 """Node 3: Active Explorer (핵심).
 
 LLM Navigator + Playwright 루프로 탐색 큐의 이벤트를 순서대로 캡처합니다.
-각 이벤트마다 최대 3회 재시도, 실패 시 manual_required로 이관합니다.
+Navigator는 액션 히스토리 기반으로 멀티스텝 탐색을 수행하며, 실패 시 manual_required로 이관합니다.
 
 dataLayer가 없는 경우(extraction_method != "datalayer"):
   - 클릭 트리거를 실행한 뒤 DOM selector로 제품 데이터를 직접 추출
@@ -298,7 +298,7 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                             "method": "dom_fallback",
                             "result": "success",
                             "selector": "",
-                            "notes": "LLM Navigator 3회 실패 → DOM 직접 추출로 폴백",
+                            "notes": "LLM Navigator 실패 → DOM 직접 추출로 폴백",
                         })
                         continue
 
