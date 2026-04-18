@@ -32,20 +32,26 @@ await inject_listener(page)   # 반드시 goto() 전에 호출
 
 ```js
 window.__gtm_captured = [
-  { event: "page_view", url: "/", ts: 1234567890, ... },
-  { event: "view_item", ecommerce: { ... } },
+  { data: { event: "view_item", ecommerce: {...} }, timestamp: 1712345678901, url: "https://..." },
+  ...
 ]
 ```
 
-원본 `dataLayer.push` 인자를 그대로 누적한다. GTM 내부 이벤트(`gtm.js`, `gtm.dom`, `gtm.load`)도 포함.
+원본 `dataLayer.push` 인자를 `data`로 감싸고 `timestamp`·`url` 메타를 덧붙여 누적한다. GTM 내부 이벤트(`gtm.js`, `gtm.dom`, `gtm.load`)도 포함.
 
 ### 주요 함수
 
 ```python
 inject_listener(page)                # listener 주입
 get_captured_events(page) -> list    # window.__gtm_captured 반환
-diagnose_datalayer(page) -> str      # "full" | "partial" | "none"
+event_fingerprint(ev) -> tuple       # (timestamp, event명, url) — 중복 판정 키
+diagnose_datalayer(page) -> dict     # {"status": "full"|"partial"|"none", ...}
 ```
+
+### 중복 판정 규칙
+
+Navigator / Explorer에서 `captured_so_far`에 대한 `in` 비교는 금지.
+`event_fingerprint(e)`로 얻은 튜플을 `set`에 넣어 O(1) 판정한다. dict 동등성 비교는 메타 필드가 추가되면 같은 이벤트를 "다른 것"으로 오인할 수 있다.
 
 ---
 
@@ -71,9 +77,16 @@ diagnose_datalayer(page) -> str      # "full" | "partial" | "none"
 
 ### 스텝 정책
 
-- `MAX_STEPS = 6` — 재시도가 아닌 멀티스텝 탐색 한도
+- `MAX_STEPS`는 `config/exploration_limits.yaml`의 `navigator.max_llm_steps`에서 로드(기본 6). Cart/Begin Checkout Navigator와 동일 방식으로 튜닝한다.
+- 재시도가 아닌 멀티스텝 탐색 한도
 - 액션 성공 but 이벤트 미발화 → "선행 조건이 있다는 신호"로 LLM에 전달, 다음 스텝 진행
 - 액션 실패 → 에러 메시지를 히스토리에 기록, LLM이 다른 selector 시도
+
+### LLM 호출 에러 처리
+
+- `LLMNavigator.__init__`에서 `utils.llm_json.make_chat_llm(...)` 팩토리로 **인스턴스 생성 시점에** ChatOpenAI를 만든다. 모듈 임포트 타이밍에 OPENAI_API_KEY를 요구하지 않는다.
+- `decide_next_action` 내부의 `ainvoke`는 `try/except`로 감싸 네트워크·rate limit·타임아웃을 `{"action": "impossible", ...}` 결정으로 변환한다. 파이프라인은 죽지 않고 Manual 이관으로 넘어간다.
+- JSON 파싱은 `utils.llm_json.parse_llm_json`만 사용한다. `split("```")[1]` 같은 직접 파싱은 펜스가 하나일 때 IndexError를 내므로 금지.
 
 ### 액션 히스토리 (`_action_history`)
 
@@ -138,12 +151,17 @@ click(page, selector, timeout=5000) -> ActionResult
 navigate(page, url, timeout=15000) -> ActionResult
 scroll(page, direction="down", px=500) -> ActionResult
 form_fill(page, selector, value) -> ActionResult
+select_option(page, selector, value, timeout=8000) -> ActionResult
+set_location_hash(page, fragment) -> ActionResult
+close_popup(page) -> ActionResult
 get_page_snapshot(page, max_chars=…, *, prefer_bottom=False) -> str   # HTML 축약
 ```
 
 `get_page_snapshot`은 `asyncio.wait_for(page.content(), 30.0)` 으로 **원본 HTML 수집 상한(30초)**. `prefer_bottom=True`이면 긴 문서에서 **앞·뒤(하단 근처)** 를 합쳐 interaction 이벤트용으로 본문이 잘리지 않게 한다. `run.log`에 `[Snapshot] …` 단계가 기록된다.
 
-`navigate()`는 `page.goto`에 더해 `asyncio.wait_for` 이중 상한으로 **지연 종료**를 방지한다.
+`navigate()`는 `page.goto`에 더해 `asyncio.wait_for`를 **failsafe**로 둔다. 내부 PW 타임아웃(`timeout` ms)이 정상 동작하면 이쪽이 먼저 발동하고, 드물게 `page.goto`가 내부 타임아웃을 넘겨도 끝나지 않는 병리적 경우에만 외부 상한(PW 타임아웃 + 5초, 최소 25초)이 작동한다. `run.log`에 두 상한 모두 기록된다.
+
+`close_popup()`은 **매 이벤트 루프 시작 시 1회만** 호출한다. 내부에서 selector 목록을 돌면서 `query_selector`로 존재 여부만 먼저 확인하고, **보이는 요소가 있을 때만** 짧은 타임아웃(800ms)으로 click한다. 팝업 없는 페이지에서 10초씩 낭비하지 않게 한 것이다.
 
 ### 타임아웃 정책
 

@@ -10,16 +10,14 @@ from __future__ import annotations
 import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 import time
 
 from agent.state import GTMAgentState
 from docs.fetcher import fetch_docs_for_media
-from utils import token_tracker
+from utils import logger, token_tracker
+from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit, update_state, write_plan
-
-_llm = ChatOpenAI(model="gpt-5.1")
 
 _PLANNING_SYSTEM = """당신은 GTM(Google Tag Manager) 전문가입니다.
 수집된 이벤트를 분석하고 GTM Variable/Trigger/Tag 설계안을 생성하세요.
@@ -198,7 +196,7 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         media_key = "naver_analytics" if tag_type.lower() == "naver" else "kakao_pixel"
         doc_context, doc_fetch_failed = fetch_docs_for_media(media_key)
         if doc_fetch_failed:
-            print(f"[Planning] {tag_type} 문서 fetch 실패 — 내장 지식으로 진행")
+            logger.warning(f"[Planning] {tag_type} 문서 fetch 실패 — 내장 지식으로 진행")
 
     # DOM 구조 정보 컨텍스트 구성
     dom_context = ""
@@ -206,8 +204,10 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         dom_context = _build_dom_context(dom_selectors, click_triggers, selector_validation)
 
     if ga4_measurement_id:
-        print(f"[Planning] GA4 Measurement ID: {ga4_measurement_id}")
-    print(f"[Planning] 총 이벤트: {[e.get('data', {}).get('event') for e in all_events]}")
+        logger.info(f"[Planning] GA4 Measurement ID: {ga4_measurement_id}")
+    logger.info(
+        f"[Planning] 총 이벤트: {[e.get('data', {}).get('event') for e in all_events]}"
+    )
 
     # 설계안 생성 루프 (HITL 피드백 반영)
     while True:
@@ -366,35 +366,16 @@ async def _generate_plan(
         SystemMessage(content=_PLANNING_SYSTEM),
         HumanMessage(content="\n".join(content_parts)),
     ]
-    response = await _llm.ainvoke(messages)
-    token_tracker.track("planning", response)
-    raw = response.content.strip()
-
-    # 1순위: 마크다운 코드 블록에서 JSON 추출
-    if "```" in raw:
-        parts = raw.split("```")
-        for part in parts[1::2]:  # 홀수 인덱스 = 코드 블록 내부
-            if part.startswith("json"):
-                part = part[4:]
-            try:
-                return json.loads(part.strip())
-            except json.JSONDecodeError:
-                continue
-
-    # 2순위: 직접 파싱 (코드 블록 없는 JSON)
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+    except Exception as e:
+        logger.error(f"[Planning] LLM 호출 실패 → 빈 설계안 반환: {e}")
+        return {"variables": [], "triggers": [], "tags": []}
+    token_tracker.track("planning", response)
 
-    # 3순위: 최외곽 { ... } 추출 시도 (LLM이 앞뒤에 설명 텍스트를 붙인 경우)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            return json.loads(raw[start:end + 1])
-        except json.JSONDecodeError:
-            pass
+    plan = parse_llm_json(response.content, fallback=None)
+    if isinstance(plan, dict) and plan:
+        return plan
 
-    print(f"[Planning] JSON 파싱 실패: {raw[:300]}")
+    logger.warning(f"[Planning] JSON 파싱 실패: {(response.content or '')[:300]}")
     return {"variables": [], "triggers": [], "tags": []}

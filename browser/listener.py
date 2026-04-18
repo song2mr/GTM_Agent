@@ -61,6 +61,24 @@ async def get_captured_events(page: Page) -> list[dict]:
     return events
 
 
+def event_fingerprint(ev: dict) -> tuple:
+    """captured_events 중복 판정을 위한 고유 키.
+
+    기존 `e in captured_so_far` (dict 전체 동등성) 비교는:
+      - 느리고(O(N*M) 필드 비교),
+      - 향후 메타 필드(`source`, 기타) 추가되면 같은 이벤트가 "다른 것"으로 보일 위험.
+
+    listener JS는 모든 이벤트에 `timestamp`를 찍어주므로 (ts, event명, url) 튜플이면
+    실용적 고유성이 확보된다. ts가 없는 외부 경로(manual 등)는 id()로 폴백해
+    최소한 객체 단위로는 구분되게 한다.
+    """
+    data = ev.get("data") or {}
+    ts = ev.get("timestamp")
+    if ts is None:
+        return ("noid", id(ev))
+    return (ts, data.get("event", ""), ev.get("url", ""))
+
+
 async def clear_captured_events(page: Page) -> None:
     """캡처된 이벤트 버퍼를 초기화합니다."""
     await page.evaluate("window.__gtm_captured = []")

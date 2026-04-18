@@ -28,6 +28,12 @@ def read_exploration_limits() -> dict[str, Any]:
     return _cache
 
 
+def navigator_max_llm_steps() -> int:
+    """일반 LLM Navigator(Active Explorer, Node 3) 스텝 상한."""
+    v = (read_exploration_limits().get("navigator") or {}).get("max_llm_steps", 6)
+    return max(1, int(v))
+
+
 def cart_addition_max_llm_steps() -> int:
     """Node 3.25 장바구니 담기 전용 Navigator 스텝 상한."""
     v = (read_exploration_limits().get("cart_addition") or {}).get("max_llm_steps", 8)

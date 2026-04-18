@@ -1,12 +1,17 @@
 # =============================================================================
 # exploration_limits.yaml — 탐색 전용 노드(LLM 멀티스텝) 튜닝
 # =============================================================================
-# 이 파일만 수정해 장바구니 담기·결제 시작 등 “UI가 긴” 이벤트의 시도 횟수를 조절한다.
+# 이 파일만 수정해 각 탐색 Navigator의 LLM 액션 스텝 상한을 조절한다.
 # 각 키는 browser/*_navigator.py 와 agent/nodes/*_explorer.py 에서 읽힌다.
 #
+# navigator       → 일반 LLM Navigator (Node 3 Active Explorer)
 # cart_addition   → Node 3.25 Cart Addition (PDP 옵션·탭·담기)
 # begin_checkout  → Node 3.5  Begin Checkout (장바구니/주문서·구매하기·약관 등)
 # =============================================================================
+
+navigator:
+  # LLMNavigator: view_item / add_to_cart 등 일반 이벤트의 한 이벤트당 최대 스텝 수
+  max_llm_steps: 6
 
 cart_addition:
   # CartAdditionNavigator: 한 이벤트당 LLM이 고를 수 있는 최대 액션 스텝 수

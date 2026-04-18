@@ -40,6 +40,8 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 3. 후보 selector를 페이지에서 실제 실행해 `selector_validation`에 저장
 4. click_triggers: 찜/장바구니 버튼 selector 사전 탐색
 
+**JSON-LD extraction JS 가드**: LLM이 만든 `extraction_js`는 `page.evaluate` 실행 전에 `_is_safe_extraction_js`로 최소 휴리스틱을 통과해야 한다. 길이 상한(8000자), `window.__extractFromJsonLd` 엔트리포인트 필수, `document.write`·`window.location.*`·`eval(`·`new Function(`·`import(`·`location.(replace|assign|href)` 같은 명백히 위험/부작용 있는 호출이 포함되면 거부하고 `logger.warning`에 사유를 남긴다. 가드 거부 시에는 JSON-LD 경로를 폴백하고 DOM 분석으로 넘어간다.
+
 **로그**: Playwright 기동 시 `run.log`에 `[StructureAnalyzer] Playwright headless=…` 한 줄.
 
 ---
@@ -61,8 +63,9 @@ EXCLUDE_FROM_EXPLORATION_QUEUE = frozenset({"purchase", "refund"})
 # 그 외 큐에 남은 이벤트 → auto_capturable
 ```
 
-**LLM 폴백**: 파싱 실패 시 `_default_queue(page_type, user_request)` 호출.
-`add_to_wishlist` 등 user_request에 명시된 커스텀 이벤트도 큐에 자동 포함된다.
+**LLM 호출·파싱**: `utils.llm_json.make_chat_llm`으로 lazy 생성한 LLM을 `try/except`로 감싸 호출한다. 네트워크·API 키·rate limit·타임아웃 어떤 실패도 파이프라인을 죽이지 않고 `_default_queue(page_type, user_request)` 폴백으로 Node 3로 넘어간다. JSON 파싱은 `parse_llm_json`만 사용한다.
+
+**기본 큐 폴백**: `add_to_wishlist` 등 user_request에 명시된 커스텀 이벤트도 큐에 자동 포함된다.
 
 ---
 

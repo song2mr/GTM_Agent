@@ -6,22 +6,18 @@
 
 from __future__ import annotations
 
-import json
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-
-import time
 
 from agent.commerce_events import (
     fallback_begin_checkout_events,
     fallback_cart_addition_events,
 )
 from agent.state import GTMAgentState
-from utils import token_tracker
+from utils import logger, token_tracker
+from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit, update_state
-
-_llm = ChatOpenAI(model="gpt-5.1")
 
 # 자동화 불가 이벤트 (Manual Capture Gateway로 전환)
 MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
@@ -172,24 +168,31 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
             )
         ),
     ]
-    response = await _llm.ainvoke(messages)
-    token_tracker.track("journey_planner", response)
-    raw = response.content.strip()
-
-    # JSON 파싱
-    if "```" in raw:
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
+    llm = make_chat_llm(model="gpt-5.1")
     try:
-        result = json.loads(raw)
-        queue: list[str] = result.get("exploration_queue", [])
+        response = await llm.ainvoke(messages)
+        token_tracker.track("journey_planner", response)
+        raw = response.content or ""
+    except Exception as e:
+        # 네트워크·API 키·rate limit·타임아웃 등 — 파이프라인을 죽이지 않고 기본 큐로 진행
+        logger.error(f"[JourneyPlanner] LLM 호출 실패 → 기본 큐 폴백: {e}")
+        emit(
+            "thought", who="agent", label="JourneyPlanner",
+            text=f"LLM 호출 실패 → 기본 큐로 진행: {e}",
+        )
+        raw = ""
+
+    result = parse_llm_json(raw, fallback={}) if raw else {}
+    if isinstance(result, dict) and result:
+        queue: list[str] = result.get("exploration_queue", []) or []
         planner_cart: object = result.get("cart_addition_events", None)
         planner_begin: object = result.get("begin_checkout_events", None)
-    except json.JSONDecodeError:
-        print(f"[JourneyPlanner] JSON 파싱 실패, 기본 큐 사용")
-        result = {}
+    else:
+        # 파싱 실패 또는 LLM 실패: 페이지 타입 기반 기본 큐 사용
+        if raw:
+            logger.warning(
+                f"[JourneyPlanner] JSON 파싱 실패, 기본 큐 사용 (raw[:200]={raw[:200]!r})"
+            )
         planner_cart = None
         planner_begin = None
         queue = _default_queue(page_type, user_request)
@@ -225,11 +228,11 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
         if event in user_request.lower() and event not in manual_required:
             manual_required.append(event)
 
-    print(f"[JourneyPlanner] 탐색 큐: {queue}")
-    print(f"[JourneyPlanner] 자동 캡처: {auto_capturable}")
-    print(f"[JourneyPlanner] 장바구니 담기 전용: {cart_addition_events}")
-    print(f"[JourneyPlanner] 결제 시작 전용: {begin_checkout_events}")
-    print(f"[JourneyPlanner] 수동 캡처 필요: {manual_required}")
+    logger.info(f"[JourneyPlanner] 탐색 큐: {queue}")
+    logger.info(f"[JourneyPlanner] 자동 캡처: {auto_capturable}")
+    logger.info(f"[JourneyPlanner] 장바구니 담기 전용: {cart_addition_events}")
+    logger.info(f"[JourneyPlanner] 결제 시작 전용: {begin_checkout_events}")
+    logger.info(f"[JourneyPlanner] 수동 캡처 필요: {manual_required}")
 
     emit(
         "thought",

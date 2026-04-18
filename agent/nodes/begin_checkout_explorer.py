@@ -174,8 +174,8 @@ async def begin_checkout_explorer(state: GTMAgentState) -> GTMAgentState:
         finally:
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[BeginCheckoutExplorer] browser.close() 예외 무시: {e}")
 
     for ev in captured_events:
         data = ev.get("data", {})

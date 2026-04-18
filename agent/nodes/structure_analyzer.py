@@ -14,7 +14,6 @@ import os
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from playwright.async_api import Page, async_playwright
 
 import time
@@ -23,9 +22,8 @@ from agent.state import GTMAgentState
 from browser.actions import get_page_snapshot, navigate
 from browser.listener import inject_listener
 from utils import logger, token_tracker
+from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit, update_state
-
-_llm = ChatOpenAI(model="gpt-5.1")
 
 # 페이지 타입별로 추출해야 할 필드 정의
 PAGE_TYPE_FIELDS: dict[str, list[str]] = {
@@ -255,12 +253,12 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
             if context is not None:
                 try:
                     await context.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[StructureAnalyzer] context.close() 예외 무시: {e}")
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[StructureAnalyzer] browser.close() 예외 무시: {e}")
 
     if result is None:
         raise RuntimeError("[StructureAnalyzer] 분석 결과가 없습니다 (내부 오류).")
@@ -297,9 +295,46 @@ URL: {url}
         SystemMessage(content=_ANALYZER_SYSTEM),
         HumanMessage(content=content),
     ]
-    response = await _llm.ainvoke(messages)
+    try:
+        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+    except Exception as e:
+        logger.error(f"[StructureAnalyzer] _analyze_html LLM 호출 실패: {e}")
+        return {}
     token_tracker.track("structure_analyzer", response)
-    return _parse_json_response(response.content)
+    return parse_llm_json(response.content)
+
+
+# LLM이 만든 JS를 page.evaluate에 넣기 전 최소 안전성 가드.
+# MVP에서도 "과하게 긴 스크립트" / "명백히 위험한 호출" 은 막아 페이지 상태 망가짐·무한 대기 방지.
+_JSONLD_JS_MAX_CHARS = 8000
+_JSONLD_JS_FORBIDDEN = (
+    "document.write",
+    "window.location",
+    "location.replace",
+    "location.assign",
+    "location.href",
+    "eval(",
+    "new Function(",
+    "import(",
+)
+
+
+def _is_safe_extraction_js(js: str) -> tuple[bool, str]:
+    """JSON-LD extraction JS를 실행해도 괜찮은지 최소 휴리스틱.
+
+    반환: (ok, reason).
+    """
+    if not js or not isinstance(js, str):
+        return False, "empty"
+    if len(js) > _JSONLD_JS_MAX_CHARS:
+        return False, f"too_long({len(js)})"
+    if "window.__extractFromJsonLd" not in js:
+        return False, "no_entrypoint"
+    low = js.lower()
+    for bad in _JSONLD_JS_FORBIDDEN:
+        if bad.lower() in low:
+            return False, f"forbidden:{bad}"
+    return True, "ok"
 
 
 async def _analyze_json_ld(json_ld_data: Any, page: Page) -> dict:
@@ -309,22 +344,36 @@ async def _analyze_json_ld(json_ld_data: Any, page: Page) -> dict:
         SystemMessage(content=_JSONLD_SYSTEM),
         HumanMessage(content=content),
     ]
-    response = await _llm.ainvoke(messages)
+    try:
+        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+    except Exception as e:
+        logger.error(f"[StructureAnalyzer] _analyze_json_ld LLM 호출 실패: {e}")
+        return {"validated": {}}
     token_tracker.track("structure_analyzer", response)
-    result = _parse_json_response(response.content)
+    result = parse_llm_json(response.content) or {}
 
-    # extraction_js가 있으면 페이지에서 실행해서 검증
+    # extraction_js는 LLM이 만든 임의 JS — 안전성 가드 통과한 것만 evaluate
     validated: dict = {}
-    extraction_js = result.get("extraction_js", "")
+    extraction_js = result.get("extraction_js", "") if isinstance(result, dict) else ""
     if extraction_js:
-        try:
-            await page.evaluate(extraction_js)
-            extracted = await page.evaluate("window.__extractFromJsonLd ? window.__extractFromJsonLd() : null")
-            if extracted and isinstance(extracted, dict):
-                validated = extracted
-        except Exception as e:
-            logger.info(f"[StructureAnalyzer] JSON-LD extraction JS 실행 실패: {e}")
+        ok, reason = _is_safe_extraction_js(extraction_js)
+        if not ok:
+            logger.warning(
+                f"[StructureAnalyzer] JSON-LD extraction JS 가드 거부: {reason}"
+            )
+        else:
+            try:
+                await page.evaluate(extraction_js)
+                extracted = await page.evaluate(
+                    "window.__extractFromJsonLd ? window.__extractFromJsonLd() : null"
+                )
+                if extracted and isinstance(extracted, dict):
+                    validated = extracted
+            except Exception as e:
+                logger.info(f"[StructureAnalyzer] JSON-LD extraction JS 실행 실패: {e}")
 
+    if not isinstance(result, dict):
+        result = {}
     result["validated"] = validated
     return result
 
@@ -418,19 +467,10 @@ URL: {url}
         SystemMessage(content=_ANALYZER_SYSTEM),
         HumanMessage(content=content),
     ]
-    response = await _llm.ainvoke(messages)
-    token_tracker.track("structure_analyzer", response)
-    return _parse_json_response(response.content)
-
-
-def _parse_json_response(raw: str) -> dict:
-    """LLM 응답에서 JSON을 파싱합니다."""
-    raw = raw.strip()
-    if "```" in raw:
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+    except Exception as e:
+        logger.error(f"[StructureAnalyzer] _retry_missing LLM 호출 실패: {e}")
         return {}
+    token_tracker.track("structure_analyzer", response)
+    return parse_llm_json(response.content)

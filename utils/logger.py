@@ -72,6 +72,10 @@ def debug(msg: str) -> None:
     _get().debug(msg)
 
 
+def warning(msg: str) -> None:
+    _get().warning(msg)
+
+
 def error(msg: str) -> None:
     _get().error(msg)
 

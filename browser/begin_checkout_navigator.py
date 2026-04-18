@@ -6,12 +6,10 @@
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from playwright.async_api import Page
 
 from browser.actions import (
@@ -25,9 +23,10 @@ from browser.actions import (
     select_option,
     set_location_hash,
 )
-from browser.listener import get_captured_events
+from browser.listener import event_fingerprint, get_captured_events
 from config.exploration_limits_loader import begin_checkout_max_llm_steps
 from utils import logger, token_tracker
+from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit
 
 
@@ -91,7 +90,8 @@ _CHECKOUT_SYSTEM_PROMPT = """당신은 한국 이커머스에서 **결제 시작
 
 class BeginCheckoutNavigator:
     def __init__(self, model: str = "gpt-5.1"):
-        self._llm = ChatOpenAI(model=model, timeout=120.0)
+        # lazy 팩토리로 ChatOpenAI 생성 — 임포트 시점 API 키 의존 제거
+        self._llm = make_chat_llm(model=model, timeout=120.0)
         self._action_history: list[dict] = []
         # config/exploration_limits.yaml — begin_checkout.max_llm_steps
         self._max_steps = begin_checkout_max_llm_steps()
@@ -200,15 +200,13 @@ class BeginCheckoutNavigator:
             return {"action": "impossible", "reason": f"LLM 실패: {e}"}
         logger.info(f"[CheckoutNavigator] LLM 완료 ({time.perf_counter() - t_llm:.2f}s)")
         token_tracker.track("begin_checkout_navigator", response)
-        raw = (response.content or "").strip()
-        if "```" in raw:
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        try:
-            decision = json.loads(raw)
-        except json.JSONDecodeError:
-            decision = {"action": "impossible", "reason": f"JSON 파싱 실패: {raw[:200]}"}
+        raw = response.content or ""
+        decision = parse_llm_json(raw, fallback=None)
+        if not isinstance(decision, dict) or "action" not in decision:
+            decision = {
+                "action": "impossible",
+                "reason": f"JSON 파싱 실패: {raw.strip()[:200]}",
+            }
 
         logger.info(
             f"[CheckoutNavigator] 결정 action={decision.get('action')!r} "
@@ -278,10 +276,11 @@ class BeginCheckoutNavigator:
 
             await page.wait_for_timeout(2000)
             events = await get_captured_events(page)
+            seen_fps = {event_fingerprint(e) for e in captured_so_far}
             new_events = [
                 e
                 for e in events
-                if e not in captured_so_far
+                if event_fingerprint(e) not in seen_fps
                 and e.get("data", {}).get("event") == target_event
             ]
             if new_events:

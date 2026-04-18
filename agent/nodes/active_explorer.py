@@ -347,8 +347,8 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
         finally:
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ActiveExplorer] browser.close() 예외 무시: {e}")
 
     logger.info(f"[ActiveExplorer] 총 캡처 이벤트: {len(captured_events)}개")
     logger.info(f"[ActiveExplorer] Manual 이관: {manual_required}")

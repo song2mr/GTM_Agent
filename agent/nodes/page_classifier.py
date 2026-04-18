@@ -114,12 +114,12 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
                         "variables": client.list_variables(workspace_id),
                     }
             except Exception as e:
-                print(f"[PageClassifier] GTM 설정 조회 실패 (무시): {e}")
+                logger.warning(f"[PageClassifier] GTM 설정 조회 실패 (무시): {e}")
         finally:
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[PageClassifier] browser.close() 예외 무시: {e}")
 
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=1, status="done", duration_ms=_dur)

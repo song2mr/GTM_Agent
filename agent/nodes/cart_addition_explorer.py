@@ -15,7 +15,7 @@ from agent.nodes.active_explorer import _build_synthetic_event, _extract_dom_dat
 from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
 from browser.cart_addition_navigator import CartAdditionNavigator
-from browser.listener import get_captured_events, inject_listener
+from browser.listener import event_fingerprint, get_captured_events, inject_listener
 from utils import logger
 from utils.ui_emitter import emit, update_state
 
@@ -93,10 +93,11 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
                     if click_result.success:
                         await page.wait_for_timeout(2000)
                         dl_events = await get_captured_events(page)
+                        seen_fps = {event_fingerprint(e) for e in captured_events}
                         dl_match = [
                             e
                             for e in dl_events
-                            if e not in captured_events
+                            if event_fingerprint(e) not in seen_fps
                             and e.get("data", {}).get("event") == target_event
                         ]
                         if dl_match:
@@ -120,9 +121,11 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
                 result = await nav.run_for_event(page, target_event, captured_events)
 
                 if result == "captured":
+                    seen_fps = {event_fingerprint(e) for e in captured_events}
                     for e in await get_captured_events(page):
-                        if e not in captured_events:
+                        if event_fingerprint(e) not in seen_fps:
                             captured_events.append(e)
+                            seen_fps.add(event_fingerprint(e))
                     exploration_log.append(f"{target_event}: CartAdditionNavigator 캡처 성공")
                     event_capture_log.append(
                         {
@@ -170,8 +173,9 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
         finally:
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                # MVP 단계에서도 브라우저 종료 실패는 디버그에 남긴다 (디스크/좀비 탐지용)
+                logger.debug(f"[CartAdditionExplorer] browser.close() 예외 무시: {e}")
 
     for ev in captured_events:
         data = ev.get("data", {})

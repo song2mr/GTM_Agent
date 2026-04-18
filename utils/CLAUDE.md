@@ -11,6 +11,43 @@
 | `ui_emitter.py` | `logs/{run_id}/` 아래 JSONL/JSON 파일에 이벤트 기록 |
 | `token_tracker.py` | 노드별 LLM 토큰 사용량 누적 집계 |
 | `logger.py` | `logs/{run_id}/` 폴더 초기화, `run_dir()` 참조 제공 |
+| `llm_json.py` | LLM 응답 JSON 파싱 공통 유틸 + `ChatOpenAI` lazy 팩토리 |
+
+---
+
+## llm_json.py
+
+LangChain LLM 응답에서 JSON을 추출하는 **모든 경로**가 이 모듈을 사용한다.
+각 노드·Navigator에 직접 `split("```")[1]` 같은 파싱을 복붙하지 말 것 — 펜스가 하나만 있는 응답에서 IndexError로 파이프라인 전체가 죽는다.
+
+```python
+from utils.llm_json import make_chat_llm, parse_llm_json
+
+# LLM 인스턴스: 모듈 최상단이 아니라 노드 함수 진입 시점에 생성
+llm = make_chat_llm(model="gpt-5.1", timeout=120.0)
+
+try:
+    response = await llm.ainvoke(messages)
+except Exception as e:
+    logger.error(f"LLM 호출 실패: {e}")
+    return fallback_state
+
+decision = parse_llm_json(response.content, fallback={})
+```
+
+### parse_llm_json(raw, *, fallback={})
+
+다음 순서로 시도하고 모두 실패하면 `fallback`을 반환. **예외를 던지지 않는다.**
+
+1. 마크다운 펜스(``` 또는 ```json ```) 사이의 각 블록을 순서대로 시도
+2. 본문 전체를 `json.loads`
+3. 최외곽 `{ ... }` 블록만 잘라 재시도
+
+### make_chat_llm(model, *, timeout, **kwargs)
+
+`ChatOpenAI(...)`를 **호출 시점에** 새로 만들어 반환한다. 모듈 최상단에서
+`_llm = ChatOpenAI(...)`로 고정하면 OPENAI_API_KEY가 임포트 시점에 없을 때
+크래시하거나 키 없는 클라이언트가 굳어버리므로, 이 팩토리를 통해 lazy 초기화한다.
 
 ---
 

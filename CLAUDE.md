@@ -82,3 +82,17 @@ Playwright 창: `serve_ui` / 노드 공통으로 `GTM_AI_HEADLESS`가 `1|true|ye
 - 코드가 바뀌면 해당 폴더의 CLAUDE.md도 같이 업데이트한다.
 - 복사·붙여넣기 금지 — 상위 파일이 하위 내용을 중복 기술하지 않는다.
 - 각 CLAUDE.md 첫 줄에 `# {패키지명} CLAUDE.md` 형식으로 제목을 쓴다.
+
+---
+
+## 공통 안정성 규칙 (전 노드 공통)
+
+로컬 MVP라도 **LLM 호출·JSON 파싱·브라우저 종료**는 파이프라인을 죽이지 않게 방어한다.
+
+- **ChatOpenAI 인스턴스는 `utils/llm_json.make_chat_llm`으로 lazy 생성**한다. 모듈 최상단 `_llm = ChatOpenAI(...)` 패턴 금지 — 임포트 시점 API 키 의존으로 크래시한다.
+- **LLM 응답 JSON 파싱은 `utils/llm_json.parse_llm_json`만 사용**한다. `split("```")[1]` 같은 직접 파싱은 펜스가 하나일 때 IndexError를 낸다.
+- **모든 `ainvoke`는 `try/except`로 감싼다**. 네트워크·rate limit·타임아웃은 "기본 큐 폴백" 또는 `{"action": "impossible"}` 결정으로 변환한다.
+- **`captured_events` 중복 판정은 `browser.listener.event_fingerprint`로 튜플화한 뒤 `set`으로 비교**한다. dict 동등성(`in`) 비교는 메타 필드가 추가되면 깨진다.
+- **`browser.close()` 예외는 `logger.debug`로 남긴다**. `except Exception: pass`로 완전히 삼키지 않는다.
+- **Navigator 스텝 상한은 `config/exploration_limits.yaml`에서 로드**한다(`navigator` / `cart_addition` / `begin_checkout`).
+- **사용자 대면이 아닌 로그는 `utils.logger`만 사용**한다(`print()` 금지). CLI HITL 프롬프트처럼 사용자가 직접 읽어야 하는 출력만 `print` 허용.

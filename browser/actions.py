@@ -40,15 +40,29 @@ async def click(page: Page, selector: str, timeout: int = 5000) -> ActionResult:
 
 
 async def navigate(page: Page, url: str, timeout: int = 15000) -> ActionResult:
-    """지정 URL로 이동합니다."""
+    """지정 URL로 이동합니다.
+
+    일부 사이트에서 `page.goto`가 내부 Playwright 타임아웃을 넘겨도 asyncio
+    레벨에서 끝나지 않는 경우가 있어 **이중 상한**을 건다.
+    - 내부(PW): `timeout` (ms). 여기서 TimeoutError가 정상적으로 올라오면 그대로 처리.
+    - 외부(asyncio): PW 타임아웃보다 **확실히 짧아야** 의미가 있어야 한다고 보일 수 있지만,
+      우리가 원하는 건 "PW가 무한히 안 끝나는 병리적 경우"만 추가로 잡는 것이다.
+      그래서 PW 타임아웃 + 5초 여유로 두고, 최소 25초 상한을 유지한다.
+      일반 시나리오에서는 PW TimeoutError가 먼저 발동해서 asyncio 상한은 사실상
+      failsafe 역할만 한다.
+    """
     emit("thought", who="tool", label="playwright.navigate", text=f"GET {url}", kind="tool")
     t0 = time.perf_counter()
-    logger.info(f"[Navigate] page.goto 시작 url={url!r} wait_until=domcontentloaded pw_timeout_ms={timeout}")
+    pw_timeout_s = float(timeout) / 1000.0
+    asyncio_timeout_s = max(pw_timeout_s + 5.0, 25.0)
+    logger.info(
+        f"[Navigate] page.goto 시작 url={url!r} wait_until=domcontentloaded "
+        f"pw_timeout={pw_timeout_s:.1f}s asyncio_failsafe={asyncio_timeout_s:.1f}s"
+    )
     try:
-        # 일부 사이트에서 page.goto가 PW 타임아웃을 넘겨도 끝나지 않는 경우가 있어 이중 상한
         await asyncio.wait_for(
             page.goto(url, wait_until="domcontentloaded", timeout=timeout),
-            timeout=max(float(timeout) / 1000.0 + 5.0, 25.0),
+            timeout=asyncio_timeout_s,
         )
         dt = time.perf_counter() - t0
         logger.info(f"[Navigate] page.goto 완료 ({dt:.2f}s) url={url!r}")
@@ -220,7 +234,14 @@ async def get_page_snapshot(
 
 
 async def close_popup(page: Page) -> ActionResult:
-    """팝업/모달 닫기를 시도합니다."""
+    """팝업/모달 닫기를 시도합니다.
+
+    기존 구현은 `click(..., timeout=1500)`을 7개 selector에 **모두** 걸어서
+    팝업이 없는 페이지에서도 최대 10.5초를 낭비했다. 이벤트 루프마다 반복
+    실행되는 함수이므로:
+    1. `query_selector`로 존재 여부만 먼저 **빠르게** 확인(내부 대기 없음).
+    2. 실제로 보이는 요소가 있을 때만 짧은 타임아웃으로 click.
+    """
     close_selectors = [
         "[aria-label='close']",
         "[aria-label='닫기']",
@@ -231,7 +252,19 @@ async def close_popup(page: Page) -> ActionResult:
         "button[class*='Close']",
     ]
     for sel in close_selectors:
-        result = await click(page, sel, timeout=1500)
+        try:
+            el = await page.query_selector(sel)
+        except Exception:
+            continue
+        if el is None:
+            continue
+        try:
+            visible = await el.is_visible()
+        except Exception:
+            visible = True  # 체크 실패 시엔 일단 시도
+        if not visible:
+            continue
+        result = await click(page, sel, timeout=800)
         if result.success:
             return ActionResult(success=True, message=f"팝업 닫기 성공: {sel}")
     return ActionResult(success=False, error="닫을 팝업 없음 또는 닫기 버튼 미발견")
