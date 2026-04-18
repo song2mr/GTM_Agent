@@ -161,6 +161,13 @@ def _explain_extraction_decision(dl_status: str, extraction_method: str) -> str:
             "HTML에서 CSS selector를 추출하고 Playwright로 검증했습니다. "
             "GTM 설계 시 DOM Element / Custom JS Variable과 Click Trigger를 사용합니다."
         )
+    if extraction_method == "datalayer" and dl_status == "none":
+        return (
+            "초기 페이지 로드 시 dataLayer 이커머스 이벤트는 없었으나, "
+            "Active Explorer 탐색 중 실제 dataLayer 이벤트(view_item_list, view_item, add_to_cart 등)가 "
+            "발화됨이 확인됐습니다. dataLayer 기반으로 GTM을 설계했습니다. "
+            "dataLayer를 발화시키지 않는 이벤트(add_to_wishlist 등)는 Click Trigger 방식을 사용합니다."
+        )
     return f"추출 방식: {extraction_method}"
 
 
@@ -286,15 +293,15 @@ def _section_publish(state: GTMAgentState) -> str:
         workspace_id = state.get("workspace_id", "-")
         return f"""## 5. Publish 결과
 
-⚠️ **Publish 권한 부족 — 수동 Publish 필요**
+⚠️ **{publish_warning}**
 
 GTM 리소스(Variable/Trigger/Tag) 생성은 완료되었습니다.
-Workspace `{workspace_id}`에 접근해 GTM UI에서 직접 Publish하세요.
+GTM UI에서 Workspace `{workspace_id}`를 직접 Publish하세요.
 
-**원인**: OAuth 토큰에 `tagmanager.publish` 스코프가 없습니다.
 **해결 방법**:
-1. Google Cloud Console → OAuth 동의 화면 → `tagmanager.publish` 스코프 추가
-2. `credentials/token.json` 삭제 후 `python gtm/auth.py` 재실행"""
+1. **[권장] GTM UI 직접 Publish**: https://tagmanager.google.com/ → 컨테이너 선택 → 제출
+2. **GTM 계정 권한 확인**: GTM → 관리 → 사용자 관리 → 해당 계정에 Publish 권한 부여
+3. **OAuth 재인증**: `credentials/token.json` 삭제 후 `python gtm/auth.py` 재실행"""
 
     if not publish_result:
         return "## 5. Publish 결과\n\nPublish가 실행되지 않았습니다."

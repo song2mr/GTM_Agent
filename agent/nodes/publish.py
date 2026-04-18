@@ -54,19 +54,20 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
         # Google Cloud Console → OAuth 동의 화면 → 범위에 tagmanager.publish 추가 후 재인증 필요
         if "403" in err_str or "insufficient" in err_str.lower() or "insufficientPermissions" in err_str:
             print(
-                "\n[Publish] ⚠️  Publish 권한 부족 (403)\n"
+                "\n[Publish] ⚠️  Publish 실패 (403 Insufficient Permission)\n"
                 "GTM 리소스(Variable/Trigger/Tag)는 모두 생성되었습니다.\n"
-                "Publish를 위해 아래 절차를 따르세요:\n"
-                "  1. Google Cloud Console → API 및 서비스 → OAuth 동의 화면\n"
-                "     → '범위 추가' → tagmanager.publish 스코프 추가 후 저장\n"
-                "  2. credentials/token.json 삭제 후 python gtm/auth.py 재실행\n"
-                "  3. 또는 GTM UI에서 직접 Publish: "
-                f"https://tagmanager.google.com/#/container/{state.get('workspace_id','')}/workspaces\n"
+                "가능한 원인 및 해결 방법:\n"
+                "  1. [GTM 계정 권한 부족] GTM UI → 관리 → 사용자 관리\n"
+                "     → 해당 계정에 'Publish' 권한이 있는지 확인\n"
+                "  2. [OAuth 토큰 스코프 부족] credentials/token.json 삭제 후\n"
+                "     python gtm/auth.py 재실행 (tagmanager.publish 스코프 재동의)\n"
+                "  3. GTM UI에서 직접 Publish 가능:\n"
+                "     https://tagmanager.google.com/\n"
             )
             return {
                 **state,
                 "publish_result": None,
-                "publish_warning": "Publish 권한 부족 — GTM UI에서 수동 Publish 필요",
+                "publish_warning": "Publish 권한 부족 (403) — GTM UI에서 수동 Publish 필요",
                 "error": None,  # 치명적 오류 아님 — reporter 정상 실행
             }
 
