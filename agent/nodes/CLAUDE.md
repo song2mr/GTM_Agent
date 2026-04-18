@@ -191,6 +191,7 @@ LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
 
 **실행 순서 엄수**: Variable → Trigger → Tag (의존 관계)
 **이름 충돌**: `create_or_update_*` 메서드로 덮어쓰기
+**DOM 변수 (`type: "d"`)**: `_build_variable`에서 `gtm.dom_variable.normalize_dom_element_parameters`로 `parameter[]`를 GTM REST 키(`selectionMethod`, `elementSelector`/`elementId`, `attributeName`)에 맞춘다. 상세·공식 링크는 `docs/gtm-variable-api.md`.
 **Rate Limit(429)**: 최대 3회 재시도(30/60/90초), 실패 시 기존 `gtm-ai-*` workspace 재사용
 
 **Workspace 상한 HITL**:

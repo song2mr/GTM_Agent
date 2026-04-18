@@ -42,7 +42,10 @@ dataLayer 이벤트용:
   parameters: [{"type":"integer","key":"dataLayerVersion","value":"2"}, {"type":"template","key":"name","value":"ecommerce.items"}]
 
 DOM 추출 이벤트용:
-- DOM Element Variable (type "d"): CSS selector로 텍스트/속성 추출
+- DOM Element Variable (type "d"): GTM REST API용 parameter[] 키를 반드시 맞출 것.
+  - CSS 선택: selectionMethod "CSS_SELECTOR", elementSelector (셀렉터 문자열), attributeName (빈 문자열이면 텍스트)
+  - Element ID 선택: selectionMethod "ID", elementId, attributeName
+  (레거시 별칭 selector/attribute는 Node 6에서 정규화되지만, 설계안에서는 공식 키 사용을 권장)
 - Custom JavaScript Variable (type "jsm"): JS 함수로 값 가공
 
 == Trigger 타입 가이드 ==

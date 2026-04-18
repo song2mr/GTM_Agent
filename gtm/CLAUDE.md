@@ -11,6 +11,7 @@ GTM API v2 클라이언트, 인증, 데이터 모델.
 | `auth.py` | OAuth2 인증, `credentials/token.json` 관리 |
 | `client.py` | GTM API v2 래퍼 (`GTMClient`) |
 | `models.py` | GTMVariable / GTMTrigger / GTMTag / GTMParameter 데이터클래스 |
+| `dom_variable.py` | DOM Element 변수(`type: "d"`) `parameter[]` 정규화(LLM 별칭 → REST 키) |
 
 ---
 
@@ -106,6 +107,12 @@ GTMVariable(
     parameters=[...]
 )
 ```
+
+### DOM Element 변수 (`type: "d"`)
+
+- 생성 전 `gtm.dom_variable.normalize_dom_element_parameters`가 `parameter[]`를 GTM REST 형식으로 맞춘다.
+- 공식 Variable 리소스·Parameter 객체: [Variables (REST v2)](https://developers.google.com/tag-platform/tag-manager/api/reference/rest/v2/accounts.containers.workspaces.variables), [Parameter](https://developers.google.com/tag-platform/tag-manager/api/reference/rest/v2/Parameter)
+- 설계안·별칭·선택 방식(`CSS_SELECTOR` / `ID`) 요약: `docs/gtm-variable-api.md`
 
 ### GTMTrigger
 

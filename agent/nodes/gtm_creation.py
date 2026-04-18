@@ -11,6 +11,7 @@ from datetime import datetime
 
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
+from gtm.dom_variable import normalize_dom_element_parameters
 from gtm.models import GTMParameter, GTMTag, GTMTrigger, GTMVariable
 from utils import logger
 from utils.ui_emitter import emit, update_state
@@ -275,6 +276,17 @@ _VARIABLE_TYPE_MAP = {
 def _build_variable(spec: dict) -> GTMVariable:
     raw_type = spec["type"]
     var_type = _VARIABLE_TYPE_MAP.get(raw_type, raw_type)
+    raw_params = spec.get("parameters", [])
+
+    if var_type == "d":
+        try:
+            normalized = normalize_dom_element_parameters(raw_params)
+        except ValueError as e:
+            raise ValueError(f"변수 '{spec.get('name', '?')}': {e}") from e
+        param_dicts = normalized
+    else:
+        param_dicts = raw_params
+
     params = [
         GTMParameter(
             type=p["type"],
@@ -283,7 +295,7 @@ def _build_variable(spec: dict) -> GTMVariable:
             list_=p.get("list", []),
             map_=p.get("map", []),
         )
-        for p in spec.get("parameters", [])
+        for p in param_dicts
     ]
     return GTMVariable(name=spec["name"], type=var_type, parameters=params)
 

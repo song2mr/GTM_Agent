@@ -9,6 +9,7 @@
 | 파일 | 역할 |
 |------|------|
 | `fetcher.py` | URL fetch, 텍스트 추출, 매체별 문서 조합 |
+| `gtm-variable-api.md` | GTM Variable REST(특히 DOM `type: "d"`) 키·정규화·공식 문서 링크 |
 
 설정은 `../config/media_sources.yaml`에서 로드한다.
 
