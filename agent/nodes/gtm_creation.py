@@ -185,6 +185,14 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     try:
         existing_ws = client.list_workspaces()
         n_ws = len(existing_ws)
+        _preview = ", ".join(
+            w.get("name", w.get("workspaceId", "?")) for w in existing_ws[:5]
+        )
+        logger.info(
+            f"[GTMCreation] workspaces.list 개수={n_ws} (한도 {GTM_WORKSPACE_LIMIT}) "
+            f"— {'HITL 분기' if n_ws >= GTM_WORKSPACE_LIMIT else '신규 생성 분기'} "
+            f"| 이름 샘플: {_preview or '(없음)'}"
+        )
 
         # 무료 컨테이너 워크스페이스 상한(3) — 꽉 찼으면 사용자에게 HITL로 물어본다.
         if n_ws >= GTM_WORKSPACE_LIMIT:

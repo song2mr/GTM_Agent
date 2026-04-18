@@ -118,7 +118,13 @@ class GTMClient:
             .list(parent=self._container_path())
             .execute()
         )
-        return result.get("workspace", [])
+        raw = result.get("workspace", [])
+        # Google JSON API는 단일 항목일 때 배열 대신 객체(dict)로 줄 때가 있어 len()이 틀어질 수 있음
+        if raw is None:
+            return []
+        if isinstance(raw, dict):
+            return [raw]
+        return list(raw)
 
     def delete_workspace(self, workspace_id: str) -> None:
         """Workspace를 삭제합니다 (기본 Workspace 제외)."""

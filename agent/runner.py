@@ -67,7 +67,9 @@ async def run_agent(config: dict) -> dict:
             if _n_ws >= 3:
                 logger.info(
                     f"[runner] GTM 워크스페이스 {_n_ws}개(상한 3) — "
-                    "Node 6에서는 신규 생성 없이 기존 `gtm-ai-*` 재사용을 시도합니다."
+                    "Node 6 진입 시 `workspaces.list` 기준으로 한도면 HITL(Approvals)에서 "
+                    "재사용/중단을 묻습니다. UI에 안 뜨면 해당 Run의 run.log 에 "
+                    "`[GTMCreation] workspaces.list 개수=` 로 실제 API 개수를 확인하세요."
                 )
         except Exception as _e_ws:
             logger.info(f"[runner] 워크스페이스 개수 사전 확인 생략: {_e_ws}")
