@@ -42,12 +42,28 @@ async def click(page: Page, selector: str, timeout: int = 5000) -> ActionResult:
 async def navigate(page: Page, url: str, timeout: int = 15000) -> ActionResult:
     """지정 URL로 이동합니다."""
     emit("thought", who="tool", label="playwright.navigate", text=f"GET {url}", kind="tool")
+    t0 = time.perf_counter()
+    logger.info(f"[Navigate] page.goto 시작 url={url!r} wait_until=domcontentloaded pw_timeout_ms={timeout}")
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+        # 일부 사이트에서 page.goto가 PW 타임아웃을 넘겨도 끝나지 않는 경우가 있어 이중 상한
+        await asyncio.wait_for(
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout),
+            timeout=max(float(timeout) / 1000.0 + 5.0, 25.0),
+        )
+        dt = time.perf_counter() - t0
+        logger.info(f"[Navigate] page.goto 완료 ({dt:.2f}s) url={url!r}")
         return ActionResult(success=True, message=f"이동 성공: {url}")
+    except asyncio.TimeoutError:
+        dt = time.perf_counter() - t0
+        logger.error(f"[Navigate] page.goto asyncio 상한 초과 ({dt:.1f}s) url={url!r}")
+        return ActionResult(success=False, error=f"이동 상한 초과(비정상 지연): {url}")
     except PWTimeoutError:
+        dt = time.perf_counter() - t0
+        logger.error(f"[Navigate] Playwright 이동 타임아웃 ({dt:.1f}s) url={url!r}")
         return ActionResult(success=False, error=f"이동 타임아웃: {url}")
     except Exception as e:
+        dt = time.perf_counter() - t0
+        logger.error(f"[Navigate] page.goto 예외 ({dt:.1f}s) url={url!r}: {e}")
         return ActionResult(success=False, error=f"이동 실패: {e}")
 
 
@@ -82,11 +98,19 @@ async def form_fill(
         return ActionResult(success=False, error=f"폼 입력 실패: {e}")
 
 
-async def get_page_snapshot(page: Page, max_chars: int = 15000) -> str:
+async def get_page_snapshot(
+    page: Page,
+    max_chars: int = 15000,
+    *,
+    prefer_bottom: bool = False,
+) -> str:
     """현재 페이지의 HTML 스냅샷을 반환합니다 (LLM 입력용으로 축약).
 
     상품 목록 / 상품 상세 링크가 페이지 중간 이후에 등장하는 경우를 위해
     max_chars를 넉넉히 잡습니다.
+
+    prefer_bottom=True(조작형 PDP 등): 앞부분만 자르면 옵션·담기 버튼이 잘리므로
+    **문서 앞 일부 + 뒤쪽(하단 근처)** 를 합쳐 max_chars 안에 넣습니다.
 
     page.content()는 일부 무거운 페이지에서 응답이 끝나지 않아 무한 대기처럼
     보일 수 있으므로 상한 시간을 둡니다.
@@ -99,7 +123,10 @@ async def get_page_snapshot(page: Page, max_chars: int = 15000) -> str:
     except Exception:
         pass
     t0 = time.perf_counter()
-    logger.info(f"[Snapshot] page.content() 시작 url={url!r} max_chars={max_chars}")
+    logger.info(
+        f"[Snapshot] page.content() 시작 url={url!r} max_chars={max_chars} "
+        f"prefer_bottom={prefer_bottom}"
+    )
     try:
         content = await asyncio.wait_for(page.content(), timeout=30.0)
     except asyncio.TimeoutError:
@@ -118,7 +145,17 @@ async def get_page_snapshot(page: Page, max_chars: int = 15000) -> str:
         content = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL)
         content = re.sub(r"<style[^>]*>.*?</style>", "", content, flags=re.DOTALL)
         content = re.sub(r"\s+", " ", content)
-        out = content[:max_chars]
+        compact = content
+        if len(compact) <= max_chars:
+            out = compact
+        elif prefer_bottom:
+            sep = "\n...[생략: HTML 앞·중간]...\n"
+            rest = max_chars - len(sep)
+            tail_len = (rest * 2) // 3
+            head_len = rest - tail_len
+            out = compact[:head_len] + sep + compact[-tail_len:]
+        else:
+            out = compact[:max_chars]
         dt = time.perf_counter() - t0
         logger.info(
             f"[Snapshot] 완료 raw_bytes~{raw_len} out_chars={len(out)} "

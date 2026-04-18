@@ -121,8 +121,8 @@ LLM이 현재 페이지 상태를 보고 다음 행동을 결정, Playwright가 
           ↓
     결과 확인
     - 새 dataLayer 이벤트 발화? → 수집
-    - 예상 변화 없음 → 재시도 (최대 3회)
-    - 3회 실패 → LLM에 "실패, 대안?" 재요청
+    - 예상 변화 없음 → 다음 스텝 (이벤트당 최대 `MAX_STEPS`, 현재 코드 기준 6)
+    - 스텝 소진 시 Manual/DOM 폴백 경로로 이관
 ```
 
 ### Manual Capture Gateway

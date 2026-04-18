@@ -11,7 +11,13 @@ from pathlib import Path
 from agent.graph import compile_graph
 from agent.state import GTMAgentState
 from utils import logger
-from utils.ui_emitter import emit, set_run_dir, update_state, write_history_index
+from utils.ui_emitter import (
+    emit,
+    flush_stale_running_nodes,
+    set_run_dir,
+    update_state,
+    write_history_index,
+)
 
 
 async def run_agent(config: dict) -> dict:
@@ -119,7 +125,22 @@ async def run_agent(config: dict) -> dict:
     }
 
     graph = compile_graph()
-    final_state = await graph.ainvoke(initial_state)
+    try:
+        final_state = await graph.ainvoke(initial_state)
+    except Exception as e:
+        logger.info(f"[runner] 그래프 실행 중 예외: {e}")
+        flush_stale_running_nodes()
+        emit("run_end", report_path=None, duration_ms=0, token_usage={})
+        update_state(
+            status="failed",
+            current_node=8,
+            error=str(e),
+        )
+        try:
+            write_history_index(Path(run_dir).parent)
+        except Exception:
+            pass
+        return {**initial_state, "error": str(e)}
 
     # 종료 이벤트 emit
     usage = final_state.get("token_usage", {})

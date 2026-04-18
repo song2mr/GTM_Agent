@@ -59,13 +59,17 @@ diagnose_datalayer(page) -> str      # "full" | "partial" | "none"
 
 `run_for_event`에서 액션 성공 후 이벤트가 아직 없을 때도 히스토리는 **`self._action_history.append`** 로만 누적해야 한다(잘못된 변수명은 `NameError`로 에이전트 스레드가 종료되어 UI가 무한 대기처럼 보일 수 있음).
 
+`close_popup`은 **이 `run_for_event` 호출당 1회**(루프 진입 전)만 호출한다. 매 스텝마다 동일 닫기 셀렉터를 연타하지 않는다. 추가 레이어는 LLM의 `click`으로 처리.
+
+**이벤트 전략 범주** (`navigator.py`): `view_item_list`·`view_cart`는 **implicit**(진입형), `add_to_cart`·`add_to_wishlist`·`select_item`·`begin_checkout`은 **interaction**(클릭 필수), 그 외는 **hybrid**. 시스템/사용자 메시지 상단 배너로 LLM이 범주를 섞지 않도록 한다.
+
 `ChatOpenAI(..., timeout=...)` 로 LLM 호출 상한을 두고, 호출 직전 `emit("thought", …)` 로 UI에 진행 중임을 알린다.
 
 **관측 로그(`run.log`)**: `decide_next_action`마다 URL·스텝·스냅샷 길이·비정상 스냅샷(타임아웃 문자열 등), LLM `ainvoke` 전후 경과 시간, 파싱된 `action`, `_execute_action` 성공 여부를 `logger.info`로 남긴다.
 
 ### 스텝 정책
 
-- `MAX_STEPS = 8` — 재시도가 아닌 멀티스텝 탐색 한도
+- `MAX_STEPS = 6` — 재시도가 아닌 멀티스텝 탐색 한도
 - 액션 성공 but 이벤트 미발화 → "선행 조건이 있다는 신호"로 LLM에 전달, 다음 스텝 진행
 - 액션 실패 → 에러 메시지를 히스토리에 기록, LLM이 다른 selector 시도
 
@@ -132,10 +136,12 @@ click(page, selector, timeout=5000) -> ActionResult
 navigate(page, url, timeout=15000) -> ActionResult
 scroll(page, direction="down", px=500) -> ActionResult
 form_fill(page, selector, value) -> ActionResult
-get_page_snapshot(page, max_chars=15000) -> str   # HTML 축약 스냅샷(기본 max_chars)
+get_page_snapshot(page, max_chars=…, *, prefer_bottom=False) -> str   # HTML 축약
 ```
 
-`get_page_snapshot`은 내부에서 `asyncio.wait_for(page.content(), 30.0)` 으로 **원본 HTML 수집 상한(30초)** 을 둔다. 무거운 페이지에서 CDP가 멈추면 타임아웃 메시지 문자열을 반환하고, `run.log`에 `[Snapshot] page.content() 시작/완료/타임아웃`이 기록된다.
+`get_page_snapshot`은 `asyncio.wait_for(page.content(), 30.0)` 으로 **원본 HTML 수집 상한(30초)**. `prefer_bottom=True`이면 긴 문서에서 **앞·뒤(하단 근처)** 를 합쳐 interaction 이벤트용으로 본문이 잘리지 않게 한다. `run.log`에 `[Snapshot] …` 단계가 기록된다.
+
+`navigate()`는 `page.goto`에 더해 `asyncio.wait_for` 이중 상한으로 **지연 종료**를 방지한다.
 
 ### 타임아웃 정책
 

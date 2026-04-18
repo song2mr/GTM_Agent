@@ -172,7 +172,7 @@ function Thoughts({ items, typing }) {
           <div className="who agent">AI</div>
           <div className="bubble agent typing">
             <div className="meta"><b>Navigator</b><span>지금</span></div>
-            <span>장바구니 담기 후 dataLayer 응답을 기다리는 중</span>
+            <span>에이전트가 다음 동작을 실행하거나 LLM 응답을 기다리는 중입니다.</span>
             <span className="cursor" />
           </div>
         </div>

@@ -115,6 +115,31 @@ def reconcile_timeline_at_reporter(*, has_error: bool) -> None:
         )
 
 
+def flush_stale_running_nodes() -> None:
+    """그래프가 예외로 중단될 때 `run`으로 남은 노드를 `failed`로 정리 (UI 타임라인 고정).
+
+    `reconcile_timeline_at_reporter`와 달리 reporter 포함 모든 노드의 run을 정리한다.
+    """
+    if _run_dir is None:
+        return
+    path = _run_dir / "state.json"
+    with _lock:
+        current: dict = {}
+        if path.exists():
+            try:
+                current = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return
+        nodes = current.get("nodes", [])
+        for n in nodes:
+            if n.get("status") == "run":
+                n["status"] = "failed"
+        current["nodes"] = nodes
+        path.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+
 def update_node_status(node_key: str, status: str) -> None:
     """state.json의 nodes 배열에서 특정 node_key의 status를 업데이트."""
     if _run_dir is None:

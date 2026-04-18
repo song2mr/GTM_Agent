@@ -81,8 +81,10 @@ MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
 DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(Click Trigger)로 자동 구분.
 
 **Navigator 루프**
-- `MAX_STEPS=8` 멀티스텝 탐색. 재시도가 아닌 스텝 진행 개념
-- `LLMNavigator._action_history`에 세션 전체 액션 누적 — 이벤트 간 리셋 없음
+- `MAX_STEPS=6` 멀티스텝 탐색. 재시도가 아닌 스텝 진행 개념
+- 이벤트별 **implicit**(view_item_list·view_cart) / **interaction**(add_to_cart 등) / **hybrid** — `navigator.py`에서 시스템·사용자 메시지로 분리해 LLM이 전략을 섞지 않게 함
+- `LLMNavigator._action_history`에 세션 전체 액션 누적 — 이벤트 간 리셋 없음; 히스토리 텍스트에는 `scroll`의 **direction**, `navigate`의 **url**, `click`의 **단일 셀렉터**(쉼표 나열 시 첫 항만 실행)가 반영됨
+- interaction·PDP URL이면 스냅샷 전 짧은 스크롤 + `get_page_snapshot(..., prefer_bottom=True)` 로 본문 가시성 보강
 - LLM이 히스토리를 보고 "현재 어느 단계인지" 스스로 판단해 다음 액션 결정
 - `EVENT_CAPTURE_GUIDE`는 "어떤 조건이 충족되어야 발화되는가" 목표 중심으로 서술
 - 클릭 실패·타임아웃은 `ActionResult.success=False`로 처리, 예외 미발생
