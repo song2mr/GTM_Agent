@@ -4,13 +4,14 @@ from typing import TypedDict
 
 
 class GTMAgentState(TypedDict):
-    # ── 입력 (.env에서 로드) ────────────────────────────────────────────────
+    # ── 입력 (UI 폼 또는 CLI에서 전달) ────────────────────────────────────────
     user_request: str
     target_url: str
     tag_type: str               # "GA4" | "naver" | "kakao"
     account_id: str
     container_id: str
     workspace_id: str           # 신규 생성 후 저장
+    measurement_id: str         # ★ UI 폼에서 전달된 G-XXXXXXXX (선택)
 
     # ── Node 1: Page Classifier ─────────────────────────────────────────────
     page_type: str              # "PLP" | "PDP" | "cart" | "checkout" | "unknown"
@@ -61,5 +62,11 @@ class GTMAgentState(TypedDict):
     #                > manual_standard > manual_paste > skipped
     event_capture_log: list
 
+    # ── 토큰 사용량 (token_tracker에서 자동 수집) ────────────────────────────
+    token_usage: dict  # token_tracker.summary() 결과
+
     # ── Node 8: Reporter ─────────────────────────────────────────────────────
     report_path: str | None  # 생성된 보고서 파일 경로
+
+    # ── 실행 모드 ─────────────────────────────────────────────────────────────
+    hitl_mode: str  # "cli" | "file" — HITL 승인 방식 (file: UI 폼, cli: 터미널)

@@ -57,6 +57,10 @@ GA4_STANDARD_SCHEMAS: dict[str, dict] = {
 
 async def manual_capture(state: GTMAgentState) -> GTMAgentState:
     """Node 4: 수동 캡처 게이트웨이 — 사용자 선택(A/B/C)."""
+    from utils.ui_emitter import emit, update_state
+    emit("node_enter", node_id=4, node_key="manual_capture", title="Manual Capture")
+    update_state(current_node=4, nodes_status={"manual_capture": "run"})
+
     manual_required: list[str] = state.get("manual_required", [])
     manual_capture_results: dict = dict(state.get("manual_capture_results", {}))
     skipped_events: list[str] = list(state.get("skipped_events", []))
@@ -64,6 +68,8 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
 
     if not manual_required:
         print("[ManualCapture] 수동 캡처 필요 이벤트 없음, 스킵")
+        emit("node_exit", node_id=4, status="skipped", duration_ms=0)
+        update_state(nodes_status={"manual_capture": "done"})
         return {
             **state,
             "manual_capture_results": manual_capture_results,
@@ -159,6 +165,9 @@ async def manual_capture(state: GTMAgentState) -> GTMAgentState:
             else:
                 valid = "A, B, C" if standard_schema else "A, C"
                 print(f"잘못된 입력입니다. {valid} 중 하나를 선택하세요.")
+
+    emit("node_exit", node_id=4, status="done", duration_ms=0)
+    update_state(nodes_status={"manual_capture": "done"})
 
     return {
         **state,

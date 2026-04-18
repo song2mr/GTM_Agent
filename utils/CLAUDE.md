@@ -1,0 +1,106 @@
+# utils CLAUDE.md
+
+에이전트 실행 중 발생하는 이벤트를 UI에 스트리밍하고 토큰 사용량을 추적하는 유틸리티.
+
+---
+
+## 파일 구성
+
+| 파일 | 역할 |
+|------|------|
+| `ui_emitter.py` | `logs/{run_id}/` 아래 JSONL/JSON 파일에 이벤트 기록 |
+| `token_tracker.py` | 노드별 LLM 토큰 사용량 누적 집계 |
+| `logger.py` | `logs/{run_id}/` 폴더 초기화, `run_dir()` 참조 제공 |
+
+---
+
+## ui_emitter.py
+
+### 초기화
+
+```python
+from utils.ui_emitter import emit, set_run_dir, update_state
+
+set_run_dir(run_dir)   # runner.py에서 1회 호출, 이후 모든 모듈에서 emit 사용 가능
+```
+
+### emit(event_type, **payload)
+
+`logs/{run_id}/events.jsonl`에 한 줄씩 append.
+UI의 `useRunLog` 훅이 1.5초마다 폴링해 증분 읽기.
+
+**표준 이벤트 타입**
+
+| event_type | 용도 | 필수 payload |
+|------------|------|-------------|
+| `run_start` | 실행 시작 | `run_id`, `target_url`, `user_request` |
+| `node_enter` | 노드 진입 | `node_id`, `node_key`, `title` |
+| `node_exit` | 노드 종료 | `node_id`, `status`, `duration_ms` |
+| `thought` | LLM 사고·툴 실행 | `who`, `label`, `text`, `kind` |
+| `datalayer_event` | dataLayer 캡처 | `event`, `url`, `source`, `params` |
+| `hitl_request` | HITL 대기 시작 | `plan` |
+| `hitl_decision` | HITL 결정 | `approved`, `feedback` |
+| `gtm_created` | GTM 리소스 생성 | `kind`, `name`, `operation` |
+| `publish_result` | Publish 결과 | `success`, `version_id`, `warning` |
+| `run_end` | 실행 종료 | `report_path`, `duration_ms` |
+
+`thought` 이벤트의 `kind`: `"plain"` | `"tool"` | `"highlight"`
+`thought` 이벤트의 `who`: `"agent"` | `"tool"` | `"user"`
+
+### update_state(**fields)
+
+`logs/{run_id}/state.json`을 partial merge.
+
+```python
+update_state(current_node=3, status="running")
+update_state(nodes_status={"active_explorer": "run"})   # nodes 배열 내 특정 노드만 업데이트
+update_state(
+    workspace_id=ws_id,
+    created_variables=[{"name": v.name, "id": v.id}],
+)
+```
+
+`nodes_status` 키는 특별 처리 — `state["nodes"]` 배열에서 `key`가 일치하는 항목의 `status`를 업데이트한다.
+
+### write_plan(plan: dict)
+
+`logs/{run_id}/plan.json` 저장. HITL 화면에서 사용.
+
+### write_history_index(logs_root)
+
+`logs/` 하위 모든 run을 스캔해 `logs/index.json` 갱신. History 화면이 이 파일을 읽는다.
+
+---
+
+## token_tracker.py
+
+### 사용법
+
+```python
+from utils import token_tracker
+
+response = await _llm.ainvoke(messages)
+token_tracker.track("planning", response)   # 노드명, AIMessage
+```
+
+### summary() 반환 구조
+
+```python
+{
+    "by_node": {
+        "planning": { "input": 1200, "output": 800, "total": 2000, "calls": 2 },
+    },
+    "total_input": int,
+    "total_output": int,
+    "total": int,
+    "total_calls": int,
+}
+```
+
+reporter(Node 8)가 `summary()`를 호출해 보고서에 포함한다.
+
+### 스레드 안전
+
+`_lock`(threading.Lock)으로 보호됨. `serve_ui.py`의 멀티스레드 환경에서 안전.
+
+`reset()`은 테스트 전용 — 프로덕션 코드에서 호출하지 않는다.

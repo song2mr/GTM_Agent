@@ -12,10 +12,13 @@ from datetime import datetime
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
 from gtm.models import GTMParameter, GTMTag, GTMTrigger, GTMVariable
+from utils.ui_emitter import emit, update_state
 
 
 async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     """Node 6: Workspace 생성 + Variable/Trigger/Tag 생성."""
+    emit("node_enter", node_id=6, node_key="gtm_creation", title="GTM Creation")
+    update_state(current_node=6, nodes_status={"gtm_creation": "run"})
     plan: dict = state.get("plan", {})
     if not plan:
         return {**state, "error": "설계안이 없습니다."}
@@ -23,7 +26,10 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     # Plan 자동 보정: 누락 트리거 생성 + 잘못된 firing_trigger_names 수정
     plan = _fix_plan(plan, state.get("captured_events", []))
 
-    client = GTMClient()
+    client = GTMClient(
+        account_id=state.get("account_id", ""),
+        container_id=state.get("container_id", ""),
+    )
 
     created_variables: list[dict] = []
     created_triggers: list[dict] = []
@@ -107,6 +113,22 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
         f"Tag {len(created_tags)}개"
     )
 
+    for v in created_variables:
+        emit("gtm_created", kind="variable", name=v.get("name", ""), operation="create")
+    for t in created_triggers:
+        emit("gtm_created", kind="trigger", name=t.get("name", ""), operation="create")
+    for t in created_tags:
+        emit("gtm_created", kind="tag", name=t.get("name", ""), operation="create")
+
+    emit("node_exit", node_id=6, status="done", duration_ms=0)
+    update_state(
+        nodes_status={"gtm_creation": "done"},
+        workspace_id=workspace_id,
+        created_variables=[{"name": v.get("name", ""), "id": v.get("variableId", "")} for v in created_variables],
+        created_triggers=[{"name": t.get("name", ""), "id": t.get("triggerId", "")} for t in created_triggers],
+        created_tags=[{"name": t.get("name", ""), "id": t.get("tagId", "")} for t in created_tags],
+    )
+
     return {
         **state,
         "workspace_id": workspace_id,
@@ -117,7 +139,14 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     }
 
 
+_VARIABLE_TYPE_MAP = {
+    "js": "jsm",   # LLM이 "js"로 생성하는 경우 GTM API의 정식 타입으로 보정
+}
+
+
 def _build_variable(spec: dict) -> GTMVariable:
+    raw_type = spec["type"]
+    var_type = _VARIABLE_TYPE_MAP.get(raw_type, raw_type)
     params = [
         GTMParameter(
             type=p["type"],
@@ -128,7 +157,7 @@ def _build_variable(spec: dict) -> GTMVariable:
         )
         for p in spec.get("parameters", [])
     ]
-    return GTMVariable(name=spec["name"], type=spec["type"], parameters=params)
+    return GTMVariable(name=spec["name"], type=var_type, parameters=params)
 
 
 _INTERNAL_EVENTS = {"gtm.js", "gtm.dom", "gtm.load"}

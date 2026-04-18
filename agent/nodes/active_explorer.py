@@ -12,11 +12,14 @@ from __future__ import annotations
 
 from playwright.async_api import Page, async_playwright
 
+import time
+
 from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
 from browser.listener import get_captured_events, inject_listener
 from browser.navigator import LLMNavigator
 from utils import logger
+from utils.ui_emitter import emit, update_state
 
 
 async def _extract_dom_data(page: Page, dom_selectors: dict) -> dict:
@@ -89,6 +92,10 @@ def _build_synthetic_event(
 
 async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     """Node 3: LLM Navigator + Playwright 루프."""
+    emit("node_enter", node_id=3, node_key="active_explorer", title="Active Explorer")
+    update_state(current_node=3, nodes_status={"active_explorer": "run"})
+    _started = time.time()
+
     target_url = state["target_url"]
     auto_capturable = state.get("auto_capturable", [])
     manual_required = list(state.get("manual_required", []))
@@ -105,8 +112,12 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     navigator = LLMNavigator()
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        page = await browser.new_page()
+        browser = await pw.chromium.launch(
+            headless=False,
+            args=["--ignore-certificate-errors", "--ignore-ssl-errors"],
+        )
+        context = await browser.new_context(ignore_https_errors=True)
+        page = await context.new_page()
 
         await inject_listener(page)
         await navigate(page, target_url)
@@ -302,11 +313,29 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                     "notes": "자동 캡처 모든 방법 실패 → Manual Capture Gateway로 이관",
                 })
 
+        await context.close()
         await browser.close()
 
     logger.info(f"[ActiveExplorer] 총 캡처 이벤트: {len(captured_events)}개")
     logger.info(f"[ActiveExplorer] Manual 이관: {manual_required}")
     logger.save_events(captured_events)
+
+    # 캡처된 datalayer 이벤트를 UI로 emit
+    for ev in captured_events:
+        data = ev.get("data", {})
+        event_name = data.get("event", "")
+        if event_name and not event_name.startswith("gtm."):
+            emit(
+                "datalayer_event",
+                event=event_name,
+                url=ev.get("url", ""),
+                source=ev.get("source", "datalayer"),
+                params={k: v for k, v in data.items() if k != "event"},
+            )
+
+    _dur = int((time.time() - _started) * 1000)
+    emit("node_exit", node_id=3, status="done", duration_ms=_dur)
+    update_state(nodes_status={"active_explorer": "done"})
 
     return {
         **state,

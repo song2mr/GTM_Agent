@@ -23,7 +23,8 @@ from browser.actions import (
     scroll,
 )
 from browser.listener import get_captured_events
-from utils import logger
+from utils import logger, token_tracker
+from utils.ui_emitter import emit
 
 MAX_RETRIES = 3
 
@@ -141,6 +142,7 @@ class LLMNavigator:
             HumanMessage(content=user_content),
         ]
         response = await self._llm.ainvoke(messages)
+        token_tracker.track("navigator", response)
         raw = response.content.strip()
 
         # JSON 파싱
@@ -154,6 +156,10 @@ class LLMNavigator:
             decision = {"action": "impossible", "reason": f"LLM 응답 파싱 실패: {raw[:200]}"}
 
         logger.log_llm_decision(target_event, attempt, decision, snapshot, page.url)
+        reason = decision.get("reason", "")
+        if reason:
+            emit("thought", who="agent", label="Navigator",
+                 text=f"[{target_event}] {reason}", kind="plain")
         return decision
 
     async def run_for_event(

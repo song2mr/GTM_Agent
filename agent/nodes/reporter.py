@@ -18,8 +18,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import time
+
 from agent.state import GTMAgentState
-from utils import logger
+from utils import logger, token_tracker
+from utils.ui_emitter import emit, update_state
 
 # 처리 방식 레이블 (보고서 표시용)
 _METHOD_LABELS: dict[str, str] = {
@@ -48,14 +51,19 @@ _DATALAYER_METHODS = {"datalayer", "navigator_datalayer", "click_trigger_datalay
 
 async def reporter(state: GTMAgentState) -> GTMAgentState:
     """Node 8: 마크다운 보고서 생성 및 저장."""
+    emit("node_enter", node_id=8, node_key="reporter", title="Reporter")
+    update_state(current_node=8, nodes_status={"reporter": "run"})
+    _started = time.time()
+
+    usage = token_tracker.summary()
+
     run_dir = logger.run_dir()
     if run_dir is None:
-        # 로거 미초기화 상황 (테스트 등) — 현재 디렉토리에 저장
         run_dir = Path("logs") / datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir.mkdir(parents=True, exist_ok=True)
 
     report_path = run_dir / "report.md"
-    content = _build_report(state)
+    content = _build_report(state, usage)
 
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -63,8 +71,22 @@ async def reporter(state: GTMAgentState) -> GTMAgentState:
     logger.info(f"[Reporter] 보고서 저장 완료 → {report_path.resolve()}")
     print(f"\n[Reporter] 보고서가 생성되었습니다: {report_path.resolve()}")
 
+    total = usage.get("total", 0)
+    total_calls = usage.get("total_calls", 0)
+    print(f"[Reporter] 총 LLM 토큰 사용량: {total:,} tokens ({total_calls}회 호출)")
+
+    _dur = int((time.time() - _started) * 1000)
+    emit("node_exit", node_id=8, status="done", duration_ms=_dur)
+    update_state(
+        nodes_status={"reporter": "done"},
+        status="done",
+        events_count=len(state.get("captured_events", [])),
+        duration=f"{_dur // 1000}s",
+    )
+
     return {
         **state,
+        "token_usage": usage,
         "report_path": str(report_path.resolve()),
     }
 
@@ -73,7 +95,7 @@ async def reporter(state: GTMAgentState) -> GTMAgentState:
 # 보고서 빌더
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _build_report(state: GTMAgentState) -> str:
+def _build_report(state: GTMAgentState, usage: dict | None = None) -> str:
     sections: list[str] = [
         _section_header(state),
         _section_datalayer_analysis(state),
@@ -88,6 +110,7 @@ def _build_report(state: GTMAgentState) -> str:
         sections.append(_section_error(error))
 
     sections.append(_section_raw_log(state))
+    sections.append(_section_token_usage(usage or {}))
 
     return "\n\n".join(s for s in sections if s)
 
@@ -328,12 +351,48 @@ def _section_error(error: str) -> str:
 ```"""
 
 
+_NODE_LABELS: dict[str, str] = {
+    "page_classifier": "Node 1 — Page Classifier",
+    "structure_analyzer": "Node 1.5 — Structure Analyzer",
+    "journey_planner": "Node 2 — Journey Planner",
+    "navigator": "Node 3 — Active Explorer (Navigator)",
+    "planning": "Node 5 — Planning",
+}
+
+
+def _section_token_usage(usage: dict) -> str:
+    total = usage.get("total", 0)
+    if not total:
+        return ""
+
+    total_input = usage.get("total_input", 0)
+    total_output = usage.get("total_output", 0)
+    total_calls = usage.get("total_calls", 0)
+    by_node: dict = usage.get("by_node", {})
+
+    rows: list[str] = []
+    for node, data in by_node.items():
+        label = _NODE_LABELS.get(node, node)
+        rows.append(
+            f"| {label} | {data['calls']} | "
+            f"{data['input']:,} | {data['output']:,} | {data['total']:,} |"
+        )
+
+    table = "\n".join(rows)
+    return f"""## 7. LLM 토큰 사용량
+
+| 노드 | 호출 횟수 | Input tokens | Output tokens | 합계 |
+|------|----------|-------------|--------------|------|
+{table}
+| **합계** | **{total_calls}** | **{total_input:,}** | **{total_output:,}** | **{total:,}** |"""
+
+
 def _section_raw_log(state: GTMAgentState) -> str:
     log: list[str] = state.get("exploration_log", [])
     if not log:
         return ""
     log_lines = "\n".join(f"- {entry}" for entry in log)
-    return f"""## 6. 실행 로그 (상세)
+    return f"""## 8. 실행 로그 (상세)
 
 <details>
 <summary>펼치기</summary>

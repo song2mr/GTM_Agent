@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
+from utils.ui_emitter import emit, update_state
 
 
 async def publish(state: GTMAgentState) -> GTMAgentState:
     """Node 7: Version 생성 + Publish."""
+    emit("node_enter", node_id=7, node_key="publish", title="Publish")
+    update_state(current_node=7, nodes_status={"publish": "run"})
     workspace_id = state.get("workspace_id", "")
     if not workspace_id:
         return {**state, "error": "workspace_id가 없습니다."}
@@ -20,7 +23,10 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
         print(f"[Publish] 이전 단계 오류로 Publish 스킵: {state['error']}")
         return state
 
-    client = GTMClient()
+    client = GTMClient(
+        account_id=state.get("account_id", ""),
+        container_id=state.get("container_id", ""),
+    )
 
     try:
         # Version 생성
@@ -41,6 +47,9 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
         # Publish
         publish_result = client.publish_version(version_path)
         print(f"[Publish] Publish 완료: version={version_id}")
+        emit("publish_result", success=True, version_id=version_id)
+        emit("node_exit", node_id=7, status="done", duration_ms=0)
+        update_state(nodes_status={"publish": "done"})
 
         return {
             **state,
@@ -64,6 +73,10 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
                 "  3. GTM UI에서 직접 Publish 가능:\n"
                 "     https://tagmanager.google.com/\n"
             )
+            emit("publish_result", success=False,
+                 warning="Publish 권한 부족 (403) — GTM UI에서 수동 Publish 필요")
+            emit("node_exit", node_id=7, status="done", duration_ms=0)
+            update_state(nodes_status={"publish": "done"})
             return {
                 **state,
                 "publish_result": None,
@@ -73,6 +86,9 @@ async def publish(state: GTMAgentState) -> GTMAgentState:
 
         error_msg = f"Publish 오류: {e}"
         print(f"[Publish] {error_msg}")
+        emit("publish_result", success=False, warning=error_msg)
+        emit("node_exit", node_id=7, status="failed", duration_ms=0)
+        update_state(nodes_status={"publish": "failed"})
         return {**state, "publish_result": None, "error": error_msg}
 
 

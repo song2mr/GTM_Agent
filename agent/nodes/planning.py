@@ -12,8 +12,12 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+import time
+
 from agent.state import GTMAgentState
 from docs.fetcher import fetch_docs_for_media
+from utils import token_tracker
+from utils.ui_emitter import emit, update_state, write_plan
 
 _llm = ChatOpenAI(model="gpt-5.1")
 
@@ -123,8 +127,10 @@ Click Trigger 예시 (add_to_wishlist):
 }
 
 Click Trigger 기반 GA4 Tag의 이벤트 파라미터:
-- items 배열은 Custom JS Variable로 페이지 DOM에서 추출하거나, view_item 이벤트 기준으로 설계
-- currency는 DLV로 이전 이벤트에서 캡처된 값 또는 Constant "KRW" 사용
+- value: CJS Variable로 페이지 DOM에서 가격을 숫자로 추출 (parseFloat 사용),
+  또는 이전 DL 이벤트(view_item 등)에서 캡처된 {{DLV - ecommerce.value}} 참조
+- currency: DLV로 이전 이벤트에서 캡처된 값 또는 Constant "KRW" 사용
+- items: Custom JS Variable로 페이지 DOM에서 추출하거나, view_item 이벤트 기준으로 설계
 """
 
 _PLANNING_SYSTEM_DOM = """당신은 GTM(Google Tag Manager) 전문가입니다.
@@ -213,6 +219,7 @@ Trigger 타입 가이드:
       ],
       "event_parameters": [
         {"key": "currency", "value": "KRW"},
+        {"key": "value", "value": "{{CJS - item_price}}"},
         {"key": "items", "value": "{{CJS - ecommerce_items}}"}
       ],
       "firing_trigger_names": ["Click - 장바구니 담기"]
@@ -262,6 +269,10 @@ def _classify_events(captured_events: list[dict]) -> tuple[list[dict], list[dict
 
 async def planning(state: GTMAgentState) -> GTMAgentState:
     """Node 5: GTM 설계안 생성 + HITL."""
+    emit("node_enter", node_id=5, node_key="planning", title="Planning · HITL")
+    update_state(current_node=5, nodes_status={"planning": "run"})
+    _started = time.time()
+
     tag_type = state.get("tag_type", "GA4")
     captured_events = state.get("captured_events", [])
     manual_capture_results = state.get("manual_capture_results", {})
@@ -274,7 +285,8 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
     selector_validation = state.get("selector_validation", {})
 
     user_request = state.get("user_request", "")
-    ga4_measurement_id = _extract_ga4_id(user_request)
+    # UI 폼에서 전달된 measurement_id 우선 사용, 없으면 user_request 파싱 폴백
+    ga4_measurement_id = state.get("measurement_id", "") or _extract_ga4_id(user_request)
 
     # 전체 이벤트 풀 구성
     all_events = list(captured_events)
@@ -334,13 +346,18 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         print("="*60)
 
-        try:
-            approval = input("\n이 설계안으로 GTM을 생성하시겠습니까? (y/n): ").strip().lower()
-        except EOFError:
-            approval = "y"
-            print("[Planning] 비대화형 모드 — 설계안 자동 승인")
+        # UI에 HITL 요청 emit
+        write_plan(plan)
+        emit("hitl_request", plan=plan)
+        update_state(nodes_status={"planning": "hitl_wait"})
+
+        approval, hitl_feedback_new = _wait_for_hitl(state.get("hitl_mode", "cli"))
 
         if approval == "y":
+            emit("hitl_decision", approved=True, feedback="")
+            _dur = int((time.time() - _started) * 1000)
+            emit("node_exit", node_id=5, status="done", duration_ms=_dur)
+            update_state(nodes_status={"planning": "done"})
             return {
                 **state,
                 "doc_context": doc_context,
@@ -351,11 +368,53 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
                 "extraction_method": effective_method,
             }
         else:
-            try:
-                hitl_feedback = input("수정 요청 사항을 입력하세요: ").strip()
-            except EOFError:
-                hitl_feedback = ""
+            hitl_feedback = hitl_feedback_new
+            emit("hitl_decision", approved=False, feedback=hitl_feedback)
             print("[Planning] 피드백 반영하여 재설계합니다...")
+
+
+def _wait_for_hitl(hitl_mode: str) -> tuple[str, str]:
+    """HITL 승인을 대기합니다. (approval, feedback) 반환."""
+    from utils import logger as _logger
+
+    run_dir = _logger.run_dir()
+
+    if hitl_mode == "file" and run_dir:
+        # UI 파일 기반 HITL: logs/{run_id}/hitl_response.json 폴링
+        response_file = run_dir / "hitl_response.json"
+        response_file.unlink(missing_ok=True)
+        print("[Planning] UI HITL 대기 중 (최대 5분)...")
+        deadline = time.time() + 300
+        while time.time() < deadline:
+            if response_file.exists():
+                try:
+                    resp = json.loads(response_file.read_text(encoding="utf-8"))
+                    response_file.unlink(missing_ok=True)
+                    approved = resp.get("approved", True)
+                    feedback = resp.get("feedback", "")
+                    print(f"[Planning] UI 응답 수신: {'승인' if approved else '거부'}")
+                    return ("y" if approved else "n"), feedback
+                except Exception:
+                    pass
+            time.sleep(1)
+        print("[Planning] HITL 타임아웃 — 자동 승인")
+        return "y", ""
+
+    # CLI 모드: 터미널 input()
+    try:
+        approval = input("\n이 설계안으로 GTM을 생성하시겠습니까? (y/n): ").strip().lower()
+    except EOFError:
+        print("[Planning] 비대화형 모드 — 설계안 자동 승인")
+        return "y", ""
+
+    if approval != "y":
+        try:
+            feedback = input("수정 요청 사항을 입력하세요: ").strip()
+        except EOFError:
+            feedback = ""
+        return "n", feedback
+
+    return "y", ""
 
 
 def _build_click_trigger_context(
@@ -469,6 +528,7 @@ async def _generate_plan(
         HumanMessage(content="\n".join(content_parts)),
     ]
     response = await _llm.ainvoke(messages)
+    token_tracker.track("planning", response)
     raw = response.content.strip()
 
     # 1순위: 마크다운 코드 블록에서 JSON 추출

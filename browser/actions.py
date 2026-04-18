@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from playwright.async_api import Page, TimeoutError as PWTimeoutError
 
+from utils.ui_emitter import emit
+
 
 @dataclass
 class ActionResult:
@@ -20,6 +22,7 @@ class ActionResult:
 
 async def click(page: Page, selector: str, timeout: int = 5000) -> ActionResult:
     """CSS/XPath selector로 요소를 클릭합니다."""
+    emit("thought", who="tool", label="playwright.click", text=selector, kind="tool")
     try:
         await page.wait_for_selector(selector, timeout=timeout)
         await page.click(selector, timeout=timeout)
@@ -35,6 +38,7 @@ async def click(page: Page, selector: str, timeout: int = 5000) -> ActionResult:
 
 async def navigate(page: Page, url: str, timeout: int = 15000) -> ActionResult:
     """지정 URL로 이동합니다."""
+    emit("thought", who="tool", label="playwright.navigate", text=f"GET {url}", kind="tool")
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout)
         return ActionResult(success=True, message=f"이동 성공: {url}")

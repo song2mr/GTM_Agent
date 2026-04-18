@@ -16,10 +16,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from playwright.async_api import Page, async_playwright
 
+import time
+
 from agent.state import GTMAgentState
 from browser.actions import get_page_snapshot, navigate
 from browser.listener import inject_listener
-from utils import logger
+from utils import logger, token_tracker
+from utils.ui_emitter import emit, update_state
 
 _llm = ChatOpenAI(model="gpt-5.1")
 
@@ -107,10 +110,19 @@ GA4 items 배열 형식으로 반환하는 함수여야 합니다.
 
 async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
     """Node 1.5: HTML 구조 분석 + selector 추출 + 검증."""
+    emit("node_enter", node_id=1.5, node_key="structure_analyzer", title="Structure Analyzer")
+    update_state(current_node=1.5, nodes_status={"structure_analyzer": "run"})
+    _started = time.time()
+
     datalayer_status = state.get("datalayer_status", "none")
 
     if datalayer_status == "full":
         logger.info("[StructureAnalyzer] dataLayer 완전 → 분석 스킵")
+        emit("thought", who="agent", label="StructureAnalyzer",
+             text="dataLayer 완전 (full) → 분석 스킵")
+        _dur = int((time.time() - _started) * 1000)
+        emit("node_exit", node_id=1.5, status="skipped", duration_ms=_dur)
+        update_state(nodes_status={"structure_analyzer": "done"})
         return {
             **state,
             "extraction_method": "datalayer",
@@ -130,8 +142,12 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
     extraction_method = "dom"
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        page = await browser.new_page()
+        browser = await pw.chromium.launch(
+            headless=False,
+            args=["--ignore-certificate-errors", "--ignore-ssl-errors"],
+        )
+        context = await browser.new_context(ignore_https_errors=True)
+        page = await context.new_page()
         await inject_listener(page)
         await navigate(page, target_url)
         await page.wait_for_timeout(2000)
@@ -223,6 +239,11 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
         f"[StructureAnalyzer] 완료: method={extraction_method}, "
         f"selectors={len(dom_selectors)}, triggers={len(click_triggers)}"
     )
+    emit("thought", who="agent", label="StructureAnalyzer",
+         text=f"완료: method={extraction_method}, selectors={len(dom_selectors)}, triggers={len(click_triggers)}")
+    _dur = int((time.time() - _started) * 1000)
+    emit("node_exit", node_id=1.5, status="done", duration_ms=_dur)
+    update_state(nodes_status={"structure_analyzer": "done"})
 
     return {
         **state,
@@ -253,6 +274,7 @@ URL: {url}
         HumanMessage(content=content),
     ]
     response = await _llm.ainvoke(messages)
+    token_tracker.track("structure_analyzer", response)
     return _parse_json_response(response.content)
 
 
@@ -264,6 +286,7 @@ async def _analyze_json_ld(json_ld_data: Any, page: Page) -> dict:
         HumanMessage(content=content),
     ]
     response = await _llm.ainvoke(messages)
+    token_tracker.track("structure_analyzer", response)
     result = _parse_json_response(response.content)
 
     # extraction_js가 있으면 페이지에서 실행해서 검증
@@ -372,6 +395,7 @@ URL: {url}
         HumanMessage(content=content),
     ]
     response = await _llm.ainvoke(messages)
+    token_tracker.track("structure_analyzer", response)
     return _parse_json_response(response.content)
 
 

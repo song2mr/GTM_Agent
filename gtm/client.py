@@ -17,11 +17,12 @@ from gtm.models import GTMTag, GTMTrigger, GTMVariable
 
 
 class GTMClient:
-    def __init__(self):
+    def __init__(self, account_id: str = "", container_id: str = ""):
         creds = get_credentials()
         self._service = build("tagmanager", "v2", credentials=creds)
-        self.account_id = os.environ["GTM_ACCOUNT_ID"]
-        self.container_id = os.environ["GTM_CONTAINER_ID"]
+        # UI 또는 CLI에서 전달된 값 우선, 없으면 환경변수 폴백 (하위 호환)
+        self.account_id = account_id or os.environ.get("GTM_ACCOUNT_ID", "")
+        self.container_id = container_id or os.environ.get("GTM_CONTAINER_ID", "")
         # 리소스 목록 캐시 (workspace_id별) — API 호출 수 최소화
         self._variable_cache: dict[str, list[dict]] = {}
         self._trigger_cache: dict[str, list[dict]] = {}

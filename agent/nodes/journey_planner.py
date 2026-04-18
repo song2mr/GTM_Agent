@@ -11,7 +11,11 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+import time
+
 from agent.state import GTMAgentState
+from utils import token_tracker
+from utils.ui_emitter import emit, update_state
 
 _llm = ChatOpenAI(model="gpt-5.1")
 
@@ -61,6 +65,10 @@ _PLANNER_SYSTEM = """당신은 GTM 이벤트 탐색 전략가입니다.
 
 async def journey_planner(state: GTMAgentState) -> GTMAgentState:
     """Node 2: 탐색 목표 이벤트 목록 + 큐 생성."""
+    emit("node_enter", node_id=2, node_key="journey_planner", title="Journey Planner")
+    update_state(current_node=2, nodes_status={"journey_planner": "run"})
+    _started = time.time()
+
     page_type = state["page_type"]
     user_request = state["user_request"]
     tag_type = state.get("tag_type", "GA4")
@@ -78,6 +86,7 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
         ),
     ]
     response = await _llm.ainvoke(messages)
+    token_tracker.track("journey_planner", response)
     raw = response.content.strip()
 
     # JSON 파싱
@@ -106,6 +115,12 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
     print(f"[JourneyPlanner] 탐색 큐: {queue}")
     print(f"[JourneyPlanner] 자동 캡처: {auto_capturable}")
     print(f"[JourneyPlanner] 수동 캡처 필요: {manual_required}")
+
+    emit("thought", who="agent", label="JourneyPlanner",
+         text=f"탐색 큐: {queue}\n자동 캡처: {auto_capturable}\nManual 필요: {manual_required}")
+    _dur = int((time.time() - _started) * 1000)
+    emit("node_exit", node_id=2, status="done", duration_ms=_dur)
+    update_state(nodes_status={"journey_planner": "done"})
 
     return {
         **state,
