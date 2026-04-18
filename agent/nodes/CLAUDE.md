@@ -66,11 +66,14 @@ MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
 
 **이벤트 캡처 우선순위 (반드시 이 순서)**
 1. dataLayer 직접 캡처 (`window.__gtm_captured`)
-2. 클릭 트리거 → dataLayer 확인
+2. 클릭 트리거 → dataLayer 확인 (DL/DOM 모드 무관하게 항상 시도)
 3. 클릭 트리거 → DOM 추출 (dataLayer 미발화 시)
 4. LLM Navigator 자동 탐색 → dataLayer 캡처
 5. DOM 폴백
 6. 실패 → `manual_required`로 이관
+
+**핵심 변경**: `use_dom` 조건 제거 — click_triggers에 있는 이벤트는 항상 클릭 후 DL 발화를 먼저 확인.
+DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(Click Trigger)로 자동 구분.
 
 **Navigator 루프**
 - 최대 3회 재시도 후 실패 시 manual로 전환
@@ -119,11 +122,13 @@ CLI 모드에서는 `input()`, file 모드에서는 hitl_response.json 방식과
 }
 ```
 
-**두 가지 시스템 프롬프트**
-- `_PLANNING_SYSTEM_DL`: dataLayer 기반 (CE Trigger 중심)
-- `_PLANNING_SYSTEM_DOM`: DOM/Click Trigger 기반
+**단일 시스템 프롬프트 (`_PLANNING_SYSTEM`)**
+LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
+- `source` 없음 / `"datalayer"` / `"datalayer+dom"` → CE Trigger + DLV Variable
+- `source = "dom_extraction"` → Click Trigger + DOM/CJS Variable
+- 비표준 이벤트명(addToCart 등)도 실제 이름 그대로 CE Trigger 생성
 
-`has_real_dl_events`가 True이면 `extraction_method`와 무관하게 DL 모드로 자동 전환.
+`_classify_events` / `effective_method` 전역 분기 제거 — 이벤트별 개별 판단.
 
 **HITL 대기**
 - `hitl_mode="cli"` → `input()` 폴링

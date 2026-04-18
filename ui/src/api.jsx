@@ -127,7 +127,6 @@ window.useWorkspaces = function useWorkspaces() {
       accountId: ws.accountId || "",
       containerId: ws.containerId || "",
       workspaceId: ws.gtmWorkspaceId || "",
-      measurementId: ws.measurementId || "",
     }));
   };
   const activeWorkspace = workspaces.find(w => w.id === activeId) || null;

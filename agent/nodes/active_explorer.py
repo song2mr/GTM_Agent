@@ -164,8 +164,8 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
 
             logger.info(f"[ActiveExplorer] 목표 이벤트: {target_event}")
 
-            # ── 우선순위 1: DOM 모드 + 클릭 트리거 → 클릭 후 dataLayer 먼저 확인 ──
-            if use_dom and target_event in click_triggers:
+            # ── 우선순위 1: 클릭 트리거 → 클릭 후 dataLayer 먼저 확인 (DL/DOM 무관) ──
+            if target_event in click_triggers:
                 trigger_sel = click_triggers[target_event]
                 logger.info(f"[ActiveExplorer] DOM 모드: {target_event} → 클릭 {trigger_sel}")
                 await close_popup(page)

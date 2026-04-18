@@ -10,8 +10,8 @@
     python serve_ui.py
 
 열기:
-    http://localhost:8765/ui/
-    http://localhost:8765/ui/?run=20260418_092214
+    http://localhost:8766/ui/
+    http://localhost:8766/ui/?run=20260418_092214
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-PORT = 8765
+PORT = 8766
 ROOT = Path(__file__).resolve().parent
 
 
@@ -129,6 +129,7 @@ def main() -> int:
     print(f"  → http://localhost:{PORT}/ui/?run=<run_id>")
     print(f"  Ctrl+C to stop.\n")
 
+    socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), Handler) as httpd:
         try:
             httpd.serve_forever()
