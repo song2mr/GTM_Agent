@@ -394,6 +394,25 @@ gtm_ai/
 14. [ ] 진입점 (`main.py`)
 
 ### Phase 4: 확장
-15. [ ] End-to-End GA4 이커머스 테스트
+15. [x] End-to-End GA4 이커머스 테스트 — leekorea.co.kr 기준 (2026-04-18)
 16. [ ] 문서 fetch 모듈 (`docs/fetcher.py`) + `config/media_sources.yaml` URL 기입
 17. [ ] Naver/Kakao 태그 지원 추가
+
+---
+
+## 12. 알려진 버그 / 수정 이력
+
+### 2026-04-18 — leekorea.co.kr 테스트 런 기반
+
+| # | 버그 | 수정 방법 | 파일 |
+|---|------|-----------|------|
+| 1 | extraction_method=dom이어도 DL 이벤트가 실제로 캡처됐으면 DL 기반 GTM 설계를 사용해야 함 | `_classify_events()`로 DL vs DOM 이벤트 분류 후 `effective_method` 결정 | `planning.py` |
+| 2 | GA4 Measurement ID를 설계안에 반영하지 않음 | user_request에서 `G-XXXXXXXX` 패턴 자동 추출 → Constant Variable 생성 + 모든 Tag에 주입 | `planning.py` |
+| 3 | customEventFilter arg0에 `{{DLV - event}}` 사용 → GTM API 400 오류 | 반드시 `{{_event}}`로 강제 수정 (`_fix_custom_event_filter()`) | `gtm_creation.py` |
+| 4 | LLM이 일부 CE Trigger(view_item, add_to_cart) 누락 생성 | `_fix_plan()`에서 DL 이벤트 순회 → 누락된 CE Trigger 자동 생성 | `gtm_creation.py` |
+| 5 | DL 이벤트 Tag가 Click Trigger에 잘못 연결됨 (예: GA4-view_item → Click Trigger) | DL 이벤트 태그는 반드시 `CE - {event}` 트리거로 강제 교정 | `gtm_creation.py` |
+| 6 | Publish 403 (insufficientPermissions) | OAuth 스코프 문제 아님 — GTM 계정 Publish 권한 부족. GTM UI에서 수동 Publish 필요 | 해결 불가 (GTM 계정 설정 문제) |
+
+### Publish 403 해결 방법
+1. GTM UI → 관리 → 사용자 관리 → 해당 계정에 Publish 권한 부여
+2. 또는 GTM UI에서 직접 게시: `https://tagmanager.google.com/`

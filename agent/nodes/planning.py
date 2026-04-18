@@ -67,10 +67,64 @@ _PLANNING_SYSTEM_DL = """당신은 GTM(Google Tag Manager) 전문가입니다.
 
 네이밍 컨벤션:
 - Variable: "DLV - {필드명}" (dataLayer variable)
-- Trigger: "CE - {event_name}" (Custom Event)
+- Constant Variable: "GA4 Measurement ID" (type: c, value: 측정 ID)
+- Trigger: "CE - {event_name}" (Custom Event for dataLayer events)
+- Trigger: "Click - {설명}" (Click Trigger for non-dataLayer events)
 - Tag: "GA4 - {event_name}" 또는 "Naver - {event_name}" 또는 "Kakao - {event_name}"
 
-GA4 Measurement ID 변수명: {{GA4 Measurement ID}} (기존 컨테이너 확인 후 있으면 재사용)
+== CRITICAL: customEventFilter 규칙 ==
+Custom Event Trigger의 customEventFilter에서:
+- 첫 번째 파라미터(arg0)는 반드시 "{{_event}}" (리터럴 문자열, DLV 변수 아님!)
+- 두 번째 파라미터(arg1)는 이벤트명 (예: "view_item")
+예시:
+"customEventFilter": [
+  {
+    "type": "equals",
+    "parameter": [
+      {"type": "template", "key": "arg0", "value": "{{_event}}"},
+      {"type": "template", "key": "arg1", "value": "view_item"}
+    ]
+  }
+]
+
+== CRITICAL: 각 이벤트마다 별도 Trigger 생성 ==
+dataLayer source 이벤트(view_item_list, view_item, add_to_cart 등) 각각에 대해
+반드시 별도의 Custom Event Trigger를 생성하세요.
+GA4 Tag의 firing_trigger_names는 반드시 해당 이벤트 전용 트리거명을 사용하세요.
+예: GA4 - view_item → CE - view_item, GA4 - add_to_cart → CE - add_to_cart
+
+== CRITICAL: Custom JS Variable 주의사항 ==
+GTM Custom JS Variable 내부에서는 {{변수명}} 참조 불가.
+dataLayer에서 직접 접근하거나 DOM에서 읽어야 합니다.
+올바른 예: function(){ return window.dataLayer && window.dataLayer.filter(x=>x.ecommerce).pop()?.ecommerce?.items || []; }
+
+== GA4 Measurement ID ==
+사용자가 GA4 측정 ID(G-XXXXXXXX)를 제공한 경우:
+1. type="c" (Constant) Variable "GA4 Measurement ID"를 생성하세요.
+2. 모든 GA4 Tag의 measurementIdOverride에 {{GA4 Measurement ID}} 참조를 사용하세요.
+
+== Mixed Scenario (DL + Click Trigger 혼용) ==
+수집된 이벤트 중 source=datalayer인 이벤트는 Custom Event Trigger를 사용하고,
+source=dom_extraction인 이벤트는 dataLayer에 push되지 않으므로 Click Trigger를 사용하세요.
+
+Click Trigger 예시 (add_to_wishlist):
+{
+  "name": "Click - 찜하기 버튼",
+  "type": "click",
+  "filter": [
+    {
+      "type": "cssSelector",
+      "parameter": [
+        {"type": "template", "key": "arg0", "value": "{{Click Element}}"},
+        {"type": "template", "key": "arg1", "value": "button[class*='Wish'], a[class*='Wish'], [onclick*='add_wishlist']"}
+      ]
+    }
+  ]
+}
+
+Click Trigger 기반 GA4 Tag의 이벤트 파라미터:
+- items 배열은 Custom JS Variable로 페이지 DOM에서 추출하거나, view_item 이벤트 기준으로 설계
+- currency는 DLV로 이전 이벤트에서 캡처된 값 또는 Constant "KRW" 사용
 """
 
 _PLANNING_SYSTEM_DOM = """당신은 GTM(Google Tag Manager) 전문가입니다.
@@ -179,6 +233,33 @@ Trigger 타입 가이드:
 """
 
 
+def _extract_ga4_id(user_request: str) -> str:
+    """user_request 또는 문자열에서 GA4 측정 ID(G-XXXXXXXX)를 추출합니다."""
+    import re
+    match = re.search(r"G-[A-Z0-9]+", user_request, re.IGNORECASE)
+    return match.group(0).upper() if match else ""
+
+
+def _classify_events(captured_events: list[dict]) -> tuple[list[dict], list[dict]]:
+    """캡처된 이벤트를 dataLayer 이벤트와 DOM 추출 이벤트로 분류합니다.
+
+    Returns:
+        (dl_events, dom_events)
+    """
+    _INTERNAL = {"gtm.js", "gtm.dom", "gtm.load"}
+    dl_events = [
+        e for e in captured_events
+        if e.get("source") not in ("dom_extraction",)
+        and e.get("data", {}).get("event") not in _INTERNAL
+        and e.get("data", {}).get("event")
+    ]
+    dom_events = [
+        e for e in captured_events
+        if e.get("source") == "dom_extraction"
+    ]
+    return dl_events, dom_events
+
+
 async def planning(state: GTMAgentState) -> GTMAgentState:
     """Node 5: GTM 설계안 생성 + HITL."""
     tag_type = state.get("tag_type", "GA4")
@@ -192,10 +273,25 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
     click_triggers = state.get("click_triggers", {})
     selector_validation = state.get("selector_validation", {})
 
+    user_request = state.get("user_request", "")
+    ga4_measurement_id = _extract_ga4_id(user_request)
+
     # 전체 이벤트 풀 구성
     all_events = list(captured_events)
     for event_name, schema in manual_capture_results.items():
         all_events.append({"data": schema, "source": "manual"})
+
+    # DL 이벤트 vs DOM 이벤트 분류
+    dl_events, dom_events = _classify_events(all_events)
+    has_real_dl_events = bool(dl_events)
+
+    # extraction_method가 dom이어도 실제 DL 이벤트가 있으면 DL 모드로 전환
+    effective_method = "datalayer" if has_real_dl_events else extraction_method
+    if has_real_dl_events and extraction_method != "datalayer":
+        print(
+            f"[Planning] extraction_method={extraction_method}이지만 "
+            f"DL 이벤트 {len(dl_events)}개 감지 → DL 기반 설계 모드로 전환"
+        )
 
     # Naver/Kakao 문서 fetch
     doc_context = ""
@@ -206,20 +302,30 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
         if doc_fetch_failed:
             print(f"[Planning] {tag_type} 문서 fetch 실패 — 내장 지식으로 진행")
 
-    # DOM 구조 정보 컨텍스트 구성
+    # DOM 구조 정보 컨텍스트 구성 (DOM 전용 이벤트가 있을 때만)
     dom_context = ""
-    if extraction_method != "datalayer" and (dom_selectors or click_triggers):
+    if dom_events and (dom_selectors or click_triggers):
         dom_context = _build_dom_context(dom_selectors, click_triggers, selector_validation)
-        print(f"[Planning] DOM 기반 설계 모드 (method={extraction_method})")
 
-    user_request = state.get("user_request", "")
+    # DOM 추출 이벤트에 대한 Click Trigger 컨텍스트 구성
+    click_trigger_context = ""
+    if dom_events:
+        dom_event_names = [e.get("data", {}).get("event", "?") for e in dom_events]
+        click_trigger_context = _build_click_trigger_context(dom_event_names, click_triggers)
+        print(f"[Planning] DOM 전용 이벤트 (Click Trigger 필요): {dom_event_names}")
+
+    print(f"[Planning] DL 이벤트: {[e.get('data',{}).get('event') for e in dl_events]}")
+    if ga4_measurement_id:
+        print(f"[Planning] GA4 Measurement ID: {ga4_measurement_id}")
 
     # 설계안 생성 루프 (HITL 피드백 반영)
     while True:
         plan = await _generate_plan(
             tag_type, all_events, existing_config, doc_context,
-            hitl_feedback, extraction_method, dom_context,
+            hitl_feedback, effective_method, dom_context,
             user_request=user_request,
+            ga4_measurement_id=ga4_measurement_id,
+            click_trigger_context=click_trigger_context,
         )
 
         # 설계안 출력
@@ -242,6 +348,7 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
                 "plan": plan,
                 "plan_approved": True,
                 "hitl_feedback": "",
+                "extraction_method": effective_method,
             }
         else:
             try:
@@ -249,6 +356,36 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
             except EOFError:
                 hitl_feedback = ""
             print("[Planning] 피드백 반영하여 재설계합니다...")
+
+
+def _build_click_trigger_context(
+    event_names: list[str],
+    click_triggers: dict,
+) -> str:
+    """DOM 추출 이벤트에 대한 Click Trigger 컨텍스트를 구성합니다."""
+    from browser.navigator import EVENT_CAPTURE_GUIDE
+
+    parts = [
+        "=== Click Trigger 필요 이벤트 (dataLayer 미발화) ===",
+        "아래 이벤트는 dataLayer에 push되지 않아 Click Trigger를 사용해야 합니다.",
+        "GTM Click 변수({{Click Classes}}, {{Click Element}}, {{Click ID}})를 활용하세요.",
+        "",
+    ]
+    for name in event_names:
+        guide = EVENT_CAPTURE_GUIDE.get(name, "")
+        verified_sel = click_triggers.get(name, "")
+        parts.append(f"이벤트: {name}")
+        if verified_sel:
+            parts.append(f"  검증된 CSS selector: {verified_sel}")
+        elif guide:
+            parts.append(f"  탐색 가이드: {guide[:200]}")
+        parts.append(
+            f"  권장 Click Trigger CSS selector 패턴 (Cafe24 기준): "
+            f"button[class*='Wish'], a[class*='Wish'], "
+            f".xans-product-detail [class*='wish'], [onclick*='add_wishlist']"
+        )
+        parts.append("")
+    return "\n".join(parts)
 
 
 def _build_dom_context(
@@ -287,6 +424,8 @@ async def _generate_plan(
     extraction_method: str = "datalayer",
     dom_context: str = "",
     user_request: str = "",
+    ga4_measurement_id: str = "",
+    click_trigger_context: str = "",
 ) -> dict:
     """LLM으로 GTM 설계안을 생성합니다."""
     events_summary = json.dumps(
@@ -301,11 +440,19 @@ async def _generate_plan(
         f"태그 유형: {tag_type}",
         f"데이터 추출 방식: {extraction_method}",
     ]
+    if ga4_measurement_id:
+        content_parts.append(
+            f"GA4 측정 ID: {ga4_measurement_id}\n"
+            f"→ 이 ID로 'GA4 Measurement ID' Constant Variable을 생성하고 "
+            f"모든 GA4 Tag의 measurementIdOverride에 사용하세요."
+        )
     if user_request:
         content_parts.append(f"사용자 요청 (반드시 이 이벤트들을 모두 설계에 포함할 것):\n{user_request}")
     content_parts += [
-        f"\n수집된 이벤트:\n{events_summary}",
+        f"\n수집된 이벤트 (source=datalayer: CE Trigger 사용, source=dom_extraction: Click Trigger 필요):\n{events_summary}",
     ]
+    if click_trigger_context:
+        content_parts.append(f"\n{click_trigger_context}")
     if dom_context:
         content_parts.append(f"\n{dom_context}")
     if existing_config:

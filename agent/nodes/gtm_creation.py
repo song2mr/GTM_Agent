@@ -20,6 +20,9 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     if not plan:
         return {**state, "error": "설계안이 없습니다."}
 
+    # Plan 자동 보정: 누락 트리거 생성 + 잘못된 firing_trigger_names 수정
+    plan = _fix_plan(plan, state.get("captured_events", []))
+
     client = GTMClient()
 
     created_variables: list[dict] = []
@@ -128,13 +131,129 @@ def _build_variable(spec: dict) -> GTMVariable:
     return GTMVariable(name=spec["name"], type=spec["type"], parameters=params)
 
 
+_INTERNAL_EVENTS = {"gtm.js", "gtm.dom", "gtm.load"}
+
+
+def _fix_plan(plan: dict, captured_events: list[dict]) -> dict:
+    """LLM이 생성한 plan의 구조적 오류를 자동 보정합니다.
+
+    1. DL 이벤트마다 CE Trigger가 없으면 자동 생성
+    2. Tag의 firing_trigger_names가 비어 있으면 이벤트명 기반으로 수정
+    3. 잘못된 firing_trigger_names 참조 수정
+    """
+    dl_event_names = [
+        e.get("data", {}).get("event")
+        for e in captured_events
+        if e.get("source") not in ("dom_extraction",)
+        and e.get("data", {}).get("event") not in _INTERNAL_EVENTS
+        and e.get("data", {}).get("event")
+    ]
+    # 중복 제거, 순서 유지
+    seen: set = set()
+    dl_event_names = [x for x in dl_event_names if x and not (x in seen or seen.add(x))]
+
+    triggers: list[dict] = list(plan.get("triggers", []))
+    existing_trigger_names = {t.get("name", "") for t in triggers}
+
+    # DL 이벤트별 CE Trigger 누락 시 자동 생성
+    for event_name in dl_event_names:
+        expected_name = f"CE - {event_name}"
+        if expected_name not in existing_trigger_names:
+            print(f"[GTMCreation] Trigger 누락 감지 → 자동 생성: {expected_name}")
+            triggers.append({
+                "name": expected_name,
+                "type": "customEvent",
+                "customEventFilter": [
+                    {
+                        "type": "equals",
+                        "parameter": [
+                            {"type": "template", "key": "arg0", "value": "{{_event}}"},
+                            {"type": "template", "key": "arg1", "value": event_name},
+                        ],
+                    }
+                ],
+            })
+            existing_trigger_names.add(expected_name)
+
+    dl_event_name_set = set(dl_event_names)
+
+    # Tag의 firing_trigger_names 보정
+    tags: list[dict] = list(plan.get("tags", []))
+    for tag in tags:
+        # parameters에서 eventName 추출
+        event_name_val = next(
+            (p.get("value") for p in tag.get("parameters", []) if p.get("key") == "eventName"),
+            None,
+        )
+        if not event_name_val:
+            continue
+
+        expected_ce = f"CE - {event_name_val}"
+        firing = tag.get("firing_trigger_names", [])
+
+        # DL 이벤트 태그는 반드시 CE Trigger 사용
+        if event_name_val in dl_event_name_set:
+            if expected_ce in existing_trigger_names:
+                if firing != [expected_ce]:
+                    print(
+                        f"[GTMCreation] DL 이벤트 태그 '{tag.get('name')}' → "
+                        f"firing_trigger_names를 [{expected_ce}]로 교정"
+                    )
+                    tag["firing_trigger_names"] = [expected_ce]
+            continue
+
+        # 비DL 이벤트 (Click Trigger 대상)
+        if not firing:
+            # 빈 경우 → 이벤트명 기반 CE Trigger 또는 Click Trigger로 대입
+            if expected_ce in existing_trigger_names:
+                print(f"[GTMCreation] Tag '{tag.get('name')}' firing_trigger_names 비어 있음 → {expected_ce} 자동 연결")
+                tag["firing_trigger_names"] = [expected_ce]
+        else:
+            # 존재하지 않는 트리거 참조 수정
+            corrected = []
+            for tname in firing:
+                if tname in existing_trigger_names:
+                    corrected.append(tname)
+                else:
+                    fallback = expected_ce
+                    if fallback in existing_trigger_names:
+                        print(f"[GTMCreation] Tag '{tag.get('name')}': '{tname}' 없음 → {fallback}로 교체")
+                        corrected.append(fallback)
+            if corrected:
+                tag["firing_trigger_names"] = corrected
+
+    return {**plan, "triggers": triggers, "tags": tags}
+
+
+def _fix_custom_event_filter(custom_event_filter: list[dict]) -> list[dict]:
+    """customEventFilter의 arg0를 GTM API 규격인 '{{_event}}'로 강제 수정합니다.
+
+    GTM API는 customEventFilter의 첫 번째 파라미터(arg0)가 반드시 '{{_event}}'여야 합니다.
+    LLM이 DLV 변수 참조를 넣는 경우가 있어 여기서 교정합니다.
+    """
+    fixed = []
+    for condition in custom_event_filter:
+        params = condition.get("parameter", [])
+        new_params = []
+        for p in params:
+            if p.get("key") == "arg0":
+                # 항상 {{_event}} 로 강제
+                new_params.append({"type": "template", "key": "arg0", "value": "{{_event}}"})
+            else:
+                new_params.append(p)
+        fixed.append({**condition, "parameter": new_params})
+    return fixed
+
+
 def _build_trigger(spec: dict) -> GTMTrigger:
     # LLM이 "filters"(복수)로 생성하는 경우도 처리
     filter_list = spec.get("filter", spec.get("filters", []))
+    raw_cef = spec.get("customEventFilter", [])
+    fixed_cef = _fix_custom_event_filter(raw_cef) if raw_cef else []
     return GTMTrigger(
         name=spec["name"],
         type=spec["type"],
-        custom_event_filter=spec.get("customEventFilter", []),
+        custom_event_filter=fixed_cef,
         filter_=filter_list,
         auto_event_filter=spec.get("autoEventFilter", []),
         parameter=spec.get("parameter", []),  # elementVisibility 등에서 사용
