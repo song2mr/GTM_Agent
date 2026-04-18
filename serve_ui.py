@@ -61,6 +61,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 sys.path.insert(0, str(ROOT))
                 from dotenv import load_dotenv
                 load_dotenv()
+                # 기본은 창 표시(headed). 숨김은 .env에 GTM_AI_HEADLESS=1
+                # (Windows에서 UI 스레드+Chromium 조합은 환경에 따라 간헐적 불안정 가능)
+                os.environ.setdefault("GTM_AI_HEADLESS", "0")
                 from agent.runner import run_agent
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)

@@ -10,6 +10,7 @@ Playwright로 실제 값 추출 가능 여부를 검증합니다.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -140,119 +141,142 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
     selector_validation: dict = {}
     click_triggers: dict = {}
     extraction_method = "dom"
+    headless = os.environ.get("GTM_AI_HEADLESS", "").lower() in ("1", "true", "yes")
+    logger.info(
+        f"[StructureAnalyzer] Playwright headless={headless} "
+        f"(GTM_AI_HEADLESS={os.environ.get('GTM_AI_HEADLESS', '')!r})"
+    )
 
+    result: GTMAgentState | None = None
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=False,
+            headless=headless,
             args=["--ignore-certificate-errors", "--ignore-ssl-errors"],
         )
-        context = await browser.new_context(ignore_https_errors=True)
-        page = await context.new_page()
-        await inject_listener(page)
-        await navigate(page, target_url)
-        await page.wait_for_timeout(2000)
+        context = None
+        try:
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
+            await inject_listener(page)
+            await navigate(page, target_url)
+            await page.wait_for_timeout(2000)
+            
+            # Phase 1: JSON-LD 분석 (있으면 우선)
+            if json_ld_raw:
+                logger.info("[StructureAnalyzer] JSON-LD 발견 → 우선 분석")
+                json_ld_result = await _analyze_json_ld(json_ld_raw, page)
+                if json_ld_result.get("completeness") == "full":
+                    extraction_method = "json_ld"
+                    dom_selectors = json_ld_result.get("mappings", {})
+                    selector_validation = json_ld_result.get("validated", {})
+                    logger.info("[StructureAnalyzer] JSON-LD만으로 충분 → DOM 분석 스킵")
+                    # 클릭 트리거는 여전히 DOM에서 찾아야 함
+                    click_triggers = await _find_click_triggers(page, page_type)
+                    result = {
+                        **state,
+                        "extraction_method": extraction_method,
+                        "dom_selectors": dom_selectors,
+                        "selector_validation": selector_validation,
+                        "json_ld_data": json_ld_raw,
+                        "click_triggers": click_triggers,
+                    }
 
-        # Phase 1: JSON-LD 분석 (있으면 우선)
-        if json_ld_raw:
-            logger.info("[StructureAnalyzer] JSON-LD 발견 → 우선 분석")
-            json_ld_result = await _analyze_json_ld(json_ld_raw, page)
-            if json_ld_result.get("completeness") == "full":
-                extraction_method = "json_ld"
-                dom_selectors = json_ld_result.get("mappings", {})
-                selector_validation = json_ld_result.get("validated", {})
-                logger.info("[StructureAnalyzer] JSON-LD만으로 충분 → DOM 분석 스킵")
-                # 클릭 트리거는 여전히 DOM에서 찾아야 함
-                click_triggers = await _find_click_triggers(page, page_type)
-                await browser.close()
-                return {
+            if result is None:
+                # Phase 2: DOM 구조 분석
+                logger.info(f"[StructureAnalyzer] DOM 분석 시작 (page_type={page_type})")
+                fields = PAGE_TYPE_FIELDS.get(page_type, PAGE_TYPE_FIELDS["pdp"])
+                snapshot = await get_page_snapshot(page, max_chars=12000)
+
+                analysis = await _analyze_html(snapshot, page_type, fields, page.url)
+                raw_selectors = analysis.get("selectors", {})
+                click_triggers = analysis.get("click_triggers", {})
+
+                # Phase 3: Playwright로 selector 검증
+                logger.info(f"[StructureAnalyzer] selector 검증 시작 ({len(raw_selectors)}개)")
+                for field, spec in raw_selectors.items():
+                    selector = spec.get("selector", "") if isinstance(spec, dict) else spec
+                    attribute = spec.get("attribute") if isinstance(spec, dict) else None
+                    if not selector:
+                        continue
+
+                    value = await _validate_selector(page, selector, attribute)
+                    if value is not None:
+                        dom_selectors[field] = spec
+                        selector_validation[field] = value
+                        logger.info(f"  [OK] {field}: {selector} → {str(value)[:80]}")
+                    else:
+                        logger.info(f"  [FAIL] {field}: {selector} → 요소 없음")
+
+                # 검증 실패한 selector에 대해 LLM에 재시도 요청
+                missing_fields = [f for f in fields if f not in selector_validation
+                                  and f not in CLICK_TRIGGER_FIELDS.values()]
+                if missing_fields:
+                    logger.info(f"[StructureAnalyzer] 미발견 필드 재시도: {missing_fields}")
+                    retry = await _retry_missing(snapshot, missing_fields, selector_validation, page.url)
+                    for field, spec in retry.get("selectors", {}).items():
+                        selector = spec.get("selector", "") if isinstance(spec, dict) else spec
+                        attribute = spec.get("attribute") if isinstance(spec, dict) else None
+                        if not selector:
+                            continue
+                        value = await _validate_selector(page, selector, attribute)
+                        if value is not None:
+                            dom_selectors[field] = spec
+                            selector_validation[field] = value
+                            logger.info(f"  [OK retry] {field}: {selector} → {str(value)[:80]}")
+
+                # 클릭 트리거 검증
+                verified_triggers: dict = {}
+                for event_name, sel in click_triggers.items():
+                    exists = await _validate_selector(page, sel) is not None
+                    if exists:
+                        verified_triggers[event_name] = sel
+                        logger.info(f"  [TRIGGER OK] {event_name}: {sel}")
+                    else:
+                        logger.info(f"  [TRIGGER FAIL] {event_name}: {sel}")
+                click_triggers = verified_triggers
+
+                if json_ld_raw and dom_selectors:
+                    extraction_method = "json_ld+dom"
+                elif dom_selectors:
+                    extraction_method = "dom"
+                else:
+                    extraction_method = "custom_js"
+
+                result = {
                     **state,
                     "extraction_method": extraction_method,
                     "dom_selectors": dom_selectors,
                     "selector_validation": selector_validation,
-                    "json_ld_data": json_ld_raw,
+                    "json_ld_data": json_ld_raw if json_ld_raw else {},
                     "click_triggers": click_triggers,
                 }
 
-        # Phase 2: DOM 구조 분석
-        logger.info(f"[StructureAnalyzer] DOM 분석 시작 (page_type={page_type})")
-        fields = PAGE_TYPE_FIELDS.get(page_type, PAGE_TYPE_FIELDS["pdp"])
-        snapshot = await get_page_snapshot(page, max_chars=12000)
+        finally:
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
-        analysis = await _analyze_html(snapshot, page_type, fields, page.url)
-        raw_selectors = analysis.get("selectors", {})
-        click_triggers = analysis.get("click_triggers", {})
-
-        # Phase 3: Playwright로 selector 검증
-        logger.info(f"[StructureAnalyzer] selector 검증 시작 ({len(raw_selectors)}개)")
-        for field, spec in raw_selectors.items():
-            selector = spec.get("selector", "") if isinstance(spec, dict) else spec
-            attribute = spec.get("attribute") if isinstance(spec, dict) else None
-            if not selector:
-                continue
-
-            value = await _validate_selector(page, selector, attribute)
-            if value is not None:
-                dom_selectors[field] = spec
-                selector_validation[field] = value
-                logger.info(f"  [OK] {field}: {selector} → {str(value)[:80]}")
-            else:
-                logger.info(f"  [FAIL] {field}: {selector} → 요소 없음")
-
-        # 검증 실패한 selector에 대해 LLM에 재시도 요청
-        missing_fields = [f for f in fields if f not in selector_validation
-                          and f not in CLICK_TRIGGER_FIELDS.values()]
-        if missing_fields:
-            logger.info(f"[StructureAnalyzer] 미발견 필드 재시도: {missing_fields}")
-            retry = await _retry_missing(snapshot, missing_fields, selector_validation, page.url)
-            for field, spec in retry.get("selectors", {}).items():
-                selector = spec.get("selector", "") if isinstance(spec, dict) else spec
-                attribute = spec.get("attribute") if isinstance(spec, dict) else None
-                if not selector:
-                    continue
-                value = await _validate_selector(page, selector, attribute)
-                if value is not None:
-                    dom_selectors[field] = spec
-                    selector_validation[field] = value
-                    logger.info(f"  [OK retry] {field}: {selector} → {str(value)[:80]}")
-
-        # 클릭 트리거 검증
-        verified_triggers: dict = {}
-        for event_name, sel in click_triggers.items():
-            exists = await _validate_selector(page, sel) is not None
-            if exists:
-                verified_triggers[event_name] = sel
-                logger.info(f"  [TRIGGER OK] {event_name}: {sel}")
-            else:
-                logger.info(f"  [TRIGGER FAIL] {event_name}: {sel}")
-        click_triggers = verified_triggers
-
-        if json_ld_raw and dom_selectors:
-            extraction_method = "json_ld+dom"
-        elif dom_selectors:
-            extraction_method = "dom"
-        else:
-            extraction_method = "custom_js"
-
-        await browser.close()
+    if result is None:
+        raise RuntimeError("[StructureAnalyzer] 분석 결과가 없습니다 (내부 오류).")
 
     logger.info(
-        f"[StructureAnalyzer] 완료: method={extraction_method}, "
-        f"selectors={len(dom_selectors)}, triggers={len(click_triggers)}"
+        f"[StructureAnalyzer] 완료: method={result['extraction_method']}, "
+        f"selectors={len(result['dom_selectors'])}, triggers={len(result['click_triggers'])}"
     )
     emit("thought", who="agent", label="StructureAnalyzer",
-         text=f"완료: method={extraction_method}, selectors={len(dom_selectors)}, triggers={len(click_triggers)}")
+         text=f"완료: method={result['extraction_method']}, "
+         f"selectors={len(result['dom_selectors'])}, triggers={len(result['click_triggers'])}")
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=1.5, status="done", duration_ms=_dur)
     update_state(nodes_status={"structure_analyzer": "done"})
 
-    return {
-        **state,
-        "extraction_method": extraction_method,
-        "dom_selectors": dom_selectors,
-        "selector_validation": selector_validation,
-        "json_ld_data": json_ld_raw if json_ld_raw else {},
-        "click_triggers": click_triggers,
-    }
+    return result
 
 
 async def _analyze_html(

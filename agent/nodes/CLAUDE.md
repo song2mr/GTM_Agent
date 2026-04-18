@@ -12,7 +12,7 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 **출력**: `page_type`, `datalayer_status`, `datalayer_events_found`, `current_url`
 
 **핵심 흐름**
-1. `async_playwright` 실행 → `headless=False`로 Chromium 실행
+1. `async_playwright` 실행 → `GTM_AI_HEADLESS`가 `1|true|yes`가 아니면 **headed**(브라우저 창 표시)
 2. `inject_listener(page)` — `add_init_script()`로 persistent listener 주입
 3. 페이지 이동 후 `window.__gtm_captured` 읽기
 4. LLM에 HTML 스냅샷 전달 → PLP/PDP/cart/checkout/home/unknown 반환
@@ -20,8 +20,9 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 
 **UI 동기화**: `datalayer_status == "full"`이면 그래프가 Structure Analyzer를 건너뛰므로, 노드 1.5가 `queued`로 남지 않게 `nodes_status={"structure_analyzer": "skip"}`를 기록한다.
 
-**주의**: `headless=False`는 CLI(`main.py`) 직접 실행 시에만 창이 보인다.
-`serve_ui.py`(백그라운드 스레드)에서는 창이 뜨지 않는다 — 의도된 동작.
+**브라우저 표시**: `serve_ui.py`는 에이전트 스레드 시작 시 `GTM_AI_HEADLESS` 미설정이면 **`0`을 기본값으로 넣어 headed**를 쓴다(`.env`에 `1`이면 headless). Windows·스레드 환경에 따라 창이 뒤에 깔리거나 간헐적으로 안 보일 수 있다.
+
+**로그**: 노드 진입 시 `run.log`에 `[PageClassifier] Playwright headless=…` 한 줄이 남는다.
 
 ---
 
@@ -38,6 +39,8 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 2. CSS selector로 가격·상품명·이미지 등 핵심 필드 후보 추출
 3. 후보 selector를 페이지에서 실제 실행해 `selector_validation`에 저장
 4. click_triggers: 찜/장바구니 버튼 selector 사전 탐색
+
+**로그**: Playwright 기동 시 `run.log`에 `[StructureAnalyzer] Playwright headless=…` 한 줄.
 
 ---
 
@@ -84,7 +87,9 @@ DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(C
 - `EVENT_CAPTURE_GUIDE`는 "어떤 조건이 충족되어야 발화되는가" 목표 중심으로 서술
 - 클릭 실패·타임아웃은 `ActionResult.success=False`로 처리, 예외 미발생
 
-**브라우저**: `GTM_AI_HEADLESS=1|true|yes`이면 headless 실행(`serve_ui`가 미설정 시 기본으로 넣음). CLI에서 창을 보려면 환경 변수를 비우거나 `0`으로 둔다.
+**브라우저**: `GTM_AI_HEADLESS=1|true|yes`이면 headless. 그 외(미설정 포함)는 headed — `serve_ui.py`는 `.env`에 값이 없을 때 **`0`을 기본 주입**한다. 숨김만 쓰려면 `.env`에 `GTM_AI_HEADLESS=1`.
+
+**로그(멈춤 추적)**: `run.log`에 `[ActiveExplorer] Playwright headless=…`, Navigator 루프의 `[Navigator] run_for_event …` / `decide_next_action …` / `LLM ainvoke …` / `액션 실행 끝 …` 및 `browser/actions.get_page_snapshot`의 `[Snapshot] page.content() …`·`완료`·`타임아웃`이 순서대로 찍힌다(스냅샷은 `page.content()` 30초 상한).
 
 **UI 동기화**: `manual_required`가 비어 있으면 Manual Capture 노드는 그래프에서 호출되지 않으므로, 탐색 종료 시 `nodes_status={"manual_capture": "skip"}`를 기록한다.
 

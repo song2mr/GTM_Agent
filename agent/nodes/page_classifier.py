@@ -19,7 +19,7 @@ from agent.state import GTMAgentState
 from gtm.client import GTMClient
 from browser.actions import get_page_snapshot
 from browser.listener import diagnose_datalayer, get_captured_events, inject_listener
-from utils import token_tracker
+from utils import logger, token_tracker
 from utils.ui_emitter import emit, update_state
 
 _llm = ChatOpenAI(model="gpt-5.1")
@@ -44,74 +44,82 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
     _started = time.time()
 
     target_url = state["target_url"]
+    headless = os.environ.get("GTM_AI_HEADLESS", "").lower() in ("1", "true", "yes")
+    logger.info(
+        f"[PageClassifier] Playwright headless={headless} "
+        f"(GTM_AI_HEADLESS={os.environ.get('GTM_AI_HEADLESS', '')!r})"
+    )
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=False,
+            headless=headless,
             args=["--ignore-certificate-errors", "--ignore-ssl-errors"],
         )
-        context = await browser.new_context(ignore_https_errors=True)
-        page = await context.new_page()
-
-        # Persistent Event Listener 주입 (페이지 이동 후에도 유지)
-        await inject_listener(page)
-
-        # 페이지 이동
-        emit("thought", who="tool", label="playwright.navigate",
-             text=f"GET {target_url}", kind="tool")
-        await page.goto(target_url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(2000)  # SPA 이벤트 대기
-
-        # 로드타임 이벤트 수집
-        load_events = await get_captured_events(page)
-
-        # dataLayer 상태 진단
-        dl_diagnosis = await diagnose_datalayer(page)
-        datalayer_status = dl_diagnosis.get("status", "none")
-        datalayer_events_found = dl_diagnosis.get("events", [])
-        json_ld_data = dl_diagnosis.get("json_ld", [])
-        print(
-            f"[PageClassifier] dataLayer 상태: {datalayer_status}, "
-            f"이벤트: {datalayer_events_found}, "
-            f"JSON-LD: {len(json_ld_data)}개"
-        )
-
-        # 페이지 타입 판단
-        snapshot = await get_page_snapshot(page)
-        messages = [
-            SystemMessage(content=_CLASSIFY_SYSTEM),
-            HumanMessage(content=f"URL: {target_url}\n\nHTML:\n{snapshot}"),
-        ]
-        response = await _llm.ainvoke(messages)
-        token_tracker.track("page_classifier", response)
-        page_type = response.content.strip().split()[0].lower()
-        valid_types = {"plp", "pdp", "cart", "checkout", "home", "unknown"}
-        if page_type not in valid_types:
-            page_type = "unknown"
-
-        print(f"[PageClassifier] 페이지 타입: {page_type}, 로드 이벤트: {len(load_events)}개")
-        emit("thought", who="agent", label="PageClassifier",
-             text=f"datalayer_status='{datalayer_status}', page_type='{page_type}', 로드 이벤트 {len(load_events)}개")
-
-        # 기존 GTM 컨테이너 설정 조회
-        existing_config: dict = {}
         try:
-            client = GTMClient(
-                account_id=state.get("account_id", ""),
-                container_id=state.get("container_id", ""),
-            )
-            workspace_id = state.get("workspace_id", "")
-            if workspace_id:
-                existing_config = {
-                    "tags": client.list_tags(workspace_id),
-                    "triggers": client.list_triggers(workspace_id),
-                    "variables": client.list_variables(workspace_id),
-                }
-        except Exception as e:
-            print(f"[PageClassifier] GTM 설정 조회 실패 (무시): {e}")
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
 
-        await context.close()
-        await browser.close()
+            # Persistent Event Listener 주입 (페이지 이동 후에도 유지)
+            await inject_listener(page)
+
+            # 페이지 이동
+            emit("thought", who="tool", label="playwright.navigate",
+                 text=f"GET {target_url}", kind="tool")
+            await page.goto(target_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)  # SPA 이벤트 대기
+
+            # 로드타임 이벤트 수집
+            load_events = await get_captured_events(page)
+
+            # dataLayer 상태 진단
+            dl_diagnosis = await diagnose_datalayer(page)
+            datalayer_status = dl_diagnosis.get("status", "none")
+            datalayer_events_found = dl_diagnosis.get("events", [])
+            json_ld_data = dl_diagnosis.get("json_ld", [])
+            print(
+                f"[PageClassifier] dataLayer 상태: {datalayer_status}, "
+                f"이벤트: {datalayer_events_found}, "
+                f"JSON-LD: {len(json_ld_data)}개"
+            )
+
+            # 페이지 타입 판단
+            snapshot = await get_page_snapshot(page)
+            messages = [
+                SystemMessage(content=_CLASSIFY_SYSTEM),
+                HumanMessage(content=f"URL: {target_url}\n\nHTML:\n{snapshot}"),
+            ]
+            response = await _llm.ainvoke(messages)
+            token_tracker.track("page_classifier", response)
+            page_type = response.content.strip().split()[0].lower()
+            valid_types = {"plp", "pdp", "cart", "checkout", "home", "unknown"}
+            if page_type not in valid_types:
+                page_type = "unknown"
+
+            print(f"[PageClassifier] 페이지 타입: {page_type}, 로드 이벤트: {len(load_events)}개")
+            emit("thought", who="agent", label="PageClassifier",
+                 text=f"datalayer_status='{datalayer_status}', page_type='{page_type}', 로드 이벤트 {len(load_events)}개")
+
+            # 기존 GTM 컨테이너 설정 조회
+            existing_config: dict = {}
+            try:
+                client = GTMClient(
+                    account_id=state.get("account_id", ""),
+                    container_id=state.get("container_id", ""),
+                )
+                workspace_id = state.get("workspace_id", "")
+                if workspace_id:
+                    existing_config = {
+                        "tags": client.list_tags(workspace_id),
+                        "triggers": client.list_triggers(workspace_id),
+                        "variables": client.list_variables(workspace_id),
+                    }
+            except Exception as e:
+                print(f"[PageClassifier] GTM 설정 조회 실패 (무시): {e}")
+        finally:
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=1, status="done", duration_ms=_dur)

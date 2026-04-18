@@ -7,6 +7,7 @@ Playwright가 해당 액션을 실행합니다. 최대 MAX_STEPS 스텝 후 실�
 from __future__ import annotations
 
 import json
+import time
 from typing import Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -116,7 +117,8 @@ action 설명:
 
 class LLMNavigator:
     def __init__(self, model: str = "gpt-5.1"):
-        self._llm = ChatOpenAI(model=model)
+        # timeout: LLM 무응답 시 UI가 무한 대기처럼 보이지 않도록 상한
+        self._llm = ChatOpenAI(model=model, timeout=120.0)
         self._action_history: list[dict] = []  # 이벤트 간 공유, 세션 내 누적
 
     async def decide_next_action(
@@ -128,7 +130,30 @@ class LLMNavigator:
         action_history: list[dict],
     ) -> dict:
         """현재 페이지 상태와 액션 히스토리를 분석하고 다음 액션을 결정합니다."""
-        snapshot = await get_page_snapshot(page)
+        logger.info(
+            f"[Navigator] decide_next_action 시작 "
+            f"event={target_event} step={step}/{MAX_STEPS} url={page.url!r} "
+            f"history_entries={len(action_history)}"
+        )
+        t_snap = time.perf_counter()
+        try:
+            snapshot = await get_page_snapshot(page)
+        except Exception as e:
+            logger.error(f"[Navigator] get_page_snapshot 예외: {e}")
+            return {
+                "action": "impossible",
+                "reason": f"페이지 스냅샷 실패: {e}",
+            }
+        snap_dt = time.perf_counter() - t_snap
+        if snapshot.startswith(("스냅샷 타임아웃", "스냅샷 실패", "스냅샷 가공 실패")):
+            logger.warning(
+                f"[Navigator] 스냅샷 비정상 결과 ({snap_dt:.2f}s, len={len(snapshot)}): "
+                f"{snapshot[:200]!r}"
+            )
+        else:
+            logger.info(
+                f"[Navigator] 스냅샷 수집·가공 완료 ({snap_dt:.2f}s, len={len(snapshot)})"
+            )
         captured_names = [e.get("data", {}).get("event", "") for e in captured_so_far]
 
         event_guide = EVENT_CAPTURE_GUIDE.get(target_event, "")
@@ -160,9 +185,37 @@ class LLMNavigator:
             SystemMessage(content=_SYSTEM_PROMPT),
             HumanMessage(content=user_content),
         ]
-        response = await self._llm.ainvoke(messages)
+        emit(
+            "thought",
+            who="agent",
+            label="Navigator",
+            text=f"[{target_event}] 스텝 {step}: LLM이 다음 동작을 결정하는 중…",
+            kind="plain",
+        )
+        user_chars = len(user_content)
+        _lm = getattr(self._llm, "model_name", None) or getattr(self._llm, "model", None)
+        logger.info(
+            f"[Navigator] LLM ainvoke 시작 model={_lm!r} user_message_chars≈{user_chars}"
+        )
+        t_llm = time.perf_counter()
+        try:
+            response = await self._llm.ainvoke(messages)
+        except Exception as e:
+            emit(
+                "thought",
+                who="agent",
+                label="Navigator",
+                text=f"[{target_event}] LLM 호출 실패: {e}",
+                kind="plain",
+            )
+            return {
+                "action": "impossible",
+                "reason": f"LLM 호출 실패(타임아웃·네트워크·API 오류 등): {e}",
+            }
+        llm_dt = time.perf_counter() - t_llm
+        logger.info(f"[Navigator] LLM ainvoke 완료 ({llm_dt:.2f}s)")
         token_tracker.track("navigator", response)
-        raw = response.content.strip()
+        raw = (response.content or "").strip()
 
         if "```" in raw:
             raw = raw.split("```")[1]
@@ -173,6 +226,10 @@ class LLMNavigator:
         except json.JSONDecodeError:
             decision = {"action": "impossible", "reason": f"LLM 응답 파싱 실패: {raw[:200]}"}
 
+        logger.info(
+            f"[Navigator] 결정 action={decision.get('action')!r} "
+            f"selector/url={decision.get('selector') or decision.get('url') or ''!r}"
+        )
         logger.log_llm_decision(target_event, step, decision, snapshot, page.url)
         reason = decision.get("reason", "")
         if reason:
@@ -188,6 +245,10 @@ class LLMNavigator:
     ) -> Literal["captured", "manual_required", "skipped"]:
         """목표 이벤트 캡처를 시도합니다. 최대 MAX_STEPS 스텝."""
         for step in range(1, MAX_STEPS + 1):
+            logger.info(
+                f"[Navigator] run_for_event 루프 event={target_event} "
+                f"step={step}/{MAX_STEPS} url={page.url!r}"
+            )
             decision = await self.decide_next_action(
                 page, target_event, captured_so_far, step, self._action_history
             )
@@ -211,7 +272,14 @@ class LLMNavigator:
                 f"selector={decision.get('selector', decision.get('url', ''))}"
             )
 
+            t_act = time.perf_counter()
             result = await self._execute_action(page, decision)
+            act_dt = time.perf_counter() - t_act
+            _err = (result.error or "")[:120]
+            logger.info(
+                f"[Navigator] 액션 실행 끝 success={result.success} "
+                f"({act_dt:.2f}s) err={_err!r}"
+            )
 
             history_entry: dict = {
                 "step": step,
@@ -244,7 +312,7 @@ class LLMNavigator:
                 logger.info(f"[Navigator] {target_event} 캡처 성공 (스텝{step})")
                 return "captured"
 
-            action_history.append(history_entry)
+            self._action_history.append(history_entry)
             logger.info(f"[Navigator] {target_event} 스텝{step}: 액션 성공 but 이벤트 미발화")
 
         logger.info(f"[Navigator] {target_event} {MAX_STEPS}스텝 소진 → Manual 이관")

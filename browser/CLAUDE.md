@@ -61,6 +61,8 @@ diagnose_datalayer(page) -> str      # "full" | "partial" | "none"
 
 `ChatOpenAI(..., timeout=...)` 로 LLM 호출 상한을 두고, 호출 직전 `emit("thought", …)` 로 UI에 진행 중임을 알린다.
 
+**관측 로그(`run.log`)**: `decide_next_action`마다 URL·스텝·스냅샷 길이·비정상 스냅샷(타임아웃 문자열 등), LLM `ainvoke` 전후 경과 시간, 파싱된 `action`, `_execute_action` 성공 여부를 `logger.info`로 남긴다.
+
 ### 스텝 정책
 
 - `MAX_STEPS = 8` — 재시도가 아닌 멀티스텝 탐색 한도
@@ -130,8 +132,10 @@ click(page, selector, timeout=5000) -> ActionResult
 navigate(page, url, timeout=15000) -> ActionResult
 scroll(page, direction="down", px=500) -> ActionResult
 form_fill(page, selector, value) -> ActionResult
-get_page_snapshot(page, max_chars=8000) -> str   # HTML 축약 스냅샷
+get_page_snapshot(page, max_chars=15000) -> str   # HTML 축약 스냅샷(기본 max_chars)
 ```
+
+`get_page_snapshot`은 내부에서 `asyncio.wait_for(page.content(), 30.0)` 으로 **원본 HTML 수집 상한(30초)** 을 둔다. 무거운 페이지에서 CDP가 멈추면 타임아웃 메시지 문자열을 반환하고, `run.log`에 `[Snapshot] page.content() 시작/완료/타임아웃`이 기록된다.
 
 ### 타임아웃 정책
 

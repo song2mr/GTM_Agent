@@ -35,6 +35,7 @@ serve_ui.py
 브라우저 폴링 (1.5초)
   ├─ logs/{run_id}/state.json    → useRunLog.state
   ├─ logs/{run_id}/events.jsonl  → useRunLog.events / thoughts / plan / publishResult (`node_enter`로 thought에 nodeKey 태깅)
+  ├─ logs/{run_id}/run.log       → 백엔드 상세(예: `[Snapshot]`, `[Navigator]` 단계, Playwright headless 여부)
   ├─ logs/{run_id}/report.md     → useReport
   └─ logs/index.json             → useHistory
 ```

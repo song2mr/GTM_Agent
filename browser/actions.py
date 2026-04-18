@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 
 from playwright.async_api import Page, TimeoutError as PWTimeoutError
 
+from utils import logger
 from utils.ui_emitter import emit
 
 
@@ -84,17 +87,48 @@ async def get_page_snapshot(page: Page, max_chars: int = 15000) -> str:
 
     상품 목록 / 상품 상세 링크가 페이지 중간 이후에 등장하는 경우를 위해
     max_chars를 넉넉히 잡습니다.
+
+    page.content()는 일부 무거운 페이지에서 응답이 끝나지 않아 무한 대기처럼
+    보일 수 있으므로 상한 시간을 둡니다.
     """
+    import re
+
+    url = ""
     try:
-        content = await page.content()
-        # 스크립트·스타일 제거 후 축약
-        import re
+        url = page.url
+    except Exception:
+        pass
+    t0 = time.perf_counter()
+    logger.info(f"[Snapshot] page.content() 시작 url={url!r} max_chars={max_chars}")
+    try:
+        content = await asyncio.wait_for(page.content(), timeout=30.0)
+    except asyncio.TimeoutError:
+        dt = time.perf_counter() - t0
+        logger.error(f"[Snapshot] page.content() 타임아웃 ({dt:.1f}s) url={url!r}")
+        return (
+            "스냅샷 타임아웃: HTML 수집이 30초 내에 완료되지 않았습니다. "
+            "페이지가 매우 무겁거나 브라우저가 응답하지 않는 상태일 수 있습니다."
+        )
+    except Exception as e:
+        dt = time.perf_counter() - t0
+        logger.error(f"[Snapshot] page.content() 예외 ({dt:.1f}s) url={url!r}: {e}")
+        return f"스냅샷 실패: {e}"
+    raw_len = len(content)
+    try:
         content = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL)
         content = re.sub(r"<style[^>]*>.*?</style>", "", content, flags=re.DOTALL)
         content = re.sub(r"\s+", " ", content)
-        return content[:max_chars]
+        out = content[:max_chars]
+        dt = time.perf_counter() - t0
+        logger.info(
+            f"[Snapshot] 완료 raw_bytes~{raw_len} out_chars={len(out)} "
+            f"elapsed={dt:.2f}s url={url!r}"
+        )
+        return out
     except Exception as e:
-        return f"스냅샷 실패: {e}"
+        dt = time.perf_counter() - t0
+        logger.error(f"[Snapshot] 가공 실패 ({dt:.1f}s) url={url!r}: {e}")
+        return f"스냅샷 가공 실패: {e}"
 
 
 async def close_popup(page: Page) -> ActionResult:

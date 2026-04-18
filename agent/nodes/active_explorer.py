@@ -10,6 +10,8 @@ dataLayer가 없는 경우(extraction_method != "datalayer"):
 
 from __future__ import annotations
 
+import os
+
 from playwright.async_api import Page, async_playwright
 
 import time
@@ -111,163 +113,178 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
 
     navigator = LLMNavigator()
 
+    headless = os.environ.get("GTM_AI_HEADLESS", "").lower() in ("1", "true", "yes")
+    logger.info(
+        f"[ActiveExplorer] Playwright headless={headless} "
+        f"(GTM_AI_HEADLESS={os.environ.get('GTM_AI_HEADLESS', '')!r})"
+    )
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=False,
+            headless=headless,
             args=["--ignore-certificate-errors", "--ignore-ssl-errors"],
         )
-        context = await browser.new_context(ignore_https_errors=True)
-        page = await context.new_page()
-
-        await inject_listener(page)
-        await navigate(page, target_url)
-        await page.wait_for_timeout(2000)
-
-        # 로드 직후 이벤트 수집 (page_view 포함)
-        initial_events = await get_captured_events(page)
-        for e in initial_events:
-            if e not in captured_events:
-                captured_events.append(e)
-
-        # DOM 모드: 페이지 로드 시 page_view + 현재 데이터 바로 추출
-        if use_dom and dom_selectors:
-            dom_data = await _extract_dom_data(page, dom_selectors)
-            if dom_data:
-                pv_event = _build_synthetic_event("page_view", dom_data, page.url)
-                captured_events.append(pv_event)
-                exploration_log.append(f"page_view: DOM 추출 성공 ({list(dom_data.keys())})")
-                logger.info(f"[ActiveExplorer] DOM 추출 page_view: {list(dom_data.keys())}")
-                event_capture_log.append({
-                    "event": "page_view",
-                    "method": "dom_fallback",
-                    "result": "success",
-                    "selector": "",
-                    "notes": f"dataLayer 미사용 사이트, DOM 직접 추출 (필드: {list(dom_data.keys())})",
-                })
-
-        for target_event in auto_capturable:
-            already_captured = any(
-                e.get("data", {}).get("event") == target_event
-                for e in captured_events
-            )
-            if already_captured:
-                exploration_log.append(f"{target_event}: 이미 캡처됨 (스킵)")
-                logger.info(f"[ActiveExplorer] {target_event} 이미 캡처됨, 스킵")
-                event_capture_log.append({
-                    "event": target_event,
-                    "method": "datalayer",
-                    "result": "success",
-                    "selector": "",
-                    "notes": "페이지 로드 시점에 이미 dataLayer에서 캡처됨",
-                })
-                continue
-
-            logger.info(f"[ActiveExplorer] 목표 이벤트: {target_event}")
-
-            # ── 우선순위 1: 클릭 트리거 → 클릭 후 dataLayer 먼저 확인 (DL/DOM 무관) ──
-            if target_event in click_triggers:
-                trigger_sel = click_triggers[target_event]
-                logger.info(f"[ActiveExplorer] DOM 모드: {target_event} → 클릭 {trigger_sel}")
-                await close_popup(page)
-
-                dom_data_before = await _extract_dom_data(page, dom_selectors)
-                click_result = await click(page, trigger_sel)
-
-                if click_result.success:
-                    await page.wait_for_timeout(2000)
-                    # 우선순위 1a: 클릭 후 dataLayer 이벤트 발화 여부 확인
-                    dl_events = await get_captured_events(page)
-                    dl_match = [
-                        e for e in dl_events
-                        if e not in captured_events
-                        and e.get("data", {}).get("event") == target_event
-                    ]
-                    if dl_match:
-                        for e in dl_match:
-                            captured_events.append(e)
-                        exploration_log.append(f"{target_event}: 클릭 후 dataLayer 캡처 성공")
-                        event_capture_log.append({
-                            "event": target_event,
-                            "method": "click_trigger_datalayer",
-                            "result": "success",
-                            "selector": trigger_sel,
-                            "notes": f"버튼 클릭({trigger_sel}) 후 dataLayer.push() 발화 확인",
-                        })
-                    else:
-                        # 우선순위 1b: dataLayer 미발화 → DOM에서 직접 추출
-                        dom_data_after = await _extract_dom_data(page, dom_selectors)
-                        data = dom_data_after if dom_data_after else dom_data_before
-                        if data:
-                            synth = _build_synthetic_event(target_event, data, page.url)
-                            captured_events.append(synth)
-                            exploration_log.append(f"{target_event}: 클릭 후 DOM 추출 성공")
-                            logger.info(f"[ActiveExplorer] {target_event} DOM 추출 성공")
-                            event_capture_log.append({
-                                "event": target_event,
-                                "method": "click_trigger_dom",
-                                "result": "success",
-                                "selector": trigger_sel,
-                                "notes": (
-                                    f"버튼 클릭({trigger_sel}) 후 dataLayer 미발화 → "
-                                    f"DOM에서 직접 데이터 추출"
-                                ),
-                            })
-                        else:
-                            if target_event not in manual_required:
-                                manual_required.append(target_event)
-                            exploration_log.append(f"{target_event}: DOM 추출 실패 → Manual")
-                            event_capture_log.append({
-                                "event": target_event,
-                                "method": "click_trigger_dom",
-                                "result": "failed",
-                                "selector": trigger_sel,
-                                "notes": "버튼 클릭 후 dataLayer 미발화, DOM 추출도 실패 → Manual 이관",
-                            })
-                else:
-                    logger.info(f"[ActiveExplorer] {target_event} 클릭 실패: {click_result.error}")
-                    if target_event not in manual_required:
-                        manual_required.append(target_event)
-                    exploration_log.append(f"{target_event}: 클릭 실패 → Manual")
+        try:
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
+            
+            await inject_listener(page)
+            await navigate(page, target_url)
+            await page.wait_for_timeout(2000)
+            
+            # 로드 직후 이벤트 수집 (page_view 포함)
+            initial_events = await get_captured_events(page)
+            for e in initial_events:
+                if e not in captured_events:
+                    captured_events.append(e)
+            
+            # DOM 모드: 페이지 로드 시 page_view + 현재 데이터 바로 추출
+            if use_dom and dom_selectors:
+                dom_data = await _extract_dom_data(page, dom_selectors)
+                if dom_data:
+                    pv_event = _build_synthetic_event("page_view", dom_data, page.url)
+                    captured_events.append(pv_event)
+                    exploration_log.append(f"page_view: DOM 추출 성공 ({list(dom_data.keys())})")
+                    logger.info(f"[ActiveExplorer] DOM 추출 page_view: {list(dom_data.keys())}")
+                    event_capture_log.append({
+                        "event": "page_view",
+                        "method": "dom_fallback",
+                        "result": "success",
+                        "selector": "",
+                        "notes": f"dataLayer 미사용 사이트, DOM 직접 추출 (필드: {list(dom_data.keys())})",
+                    })
+            
+            for target_event in auto_capturable:
+                already_captured = any(
+                    e.get("data", {}).get("event") == target_event
+                    for e in captured_events
+                )
+                if already_captured:
+                    exploration_log.append(f"{target_event}: 이미 캡처됨 (스킵)")
+                    logger.info(f"[ActiveExplorer] {target_event} 이미 캡처됨, 스킵")
                     event_capture_log.append({
                         "event": target_event,
-                        "method": "click_trigger_dom",
-                        "result": "failed",
-                        "selector": trigger_sel,
-                        "notes": f"버튼 클릭 실패 ({click_result.error}) → Manual 이관",
+                        "method": "datalayer",
+                        "result": "success",
+                        "selector": "",
+                        "notes": "페이지 로드 시점에 이미 dataLayer에서 캡처됨",
                     })
-                continue
-
-            # ── 우선순위 2: LLM Navigator 루프 (dataLayer 기반) ──
-            result = await navigator.run_for_event(page, target_event, captured_events)
-
-            if result == "captured":
-                all_events = await get_captured_events(page)
-                for e in all_events:
-                    if e not in captured_events:
-                        captured_events.append(e)
-                exploration_log.append(f"{target_event}: 캡처 성공")
-
-                # 우선순위 2a: dataLayer에서 캡처됐지만 ecommerce 데이터 부족 → DOM 보충
-                if use_dom and dom_selectors:
-                    last_match = next(
-                        (e for e in reversed(captured_events)
-                         if e.get("data", {}).get("event") == target_event),
-                        None,
-                    )
-                    if last_match and not last_match.get("data", {}).get("ecommerce"):
-                        dom_data = await _extract_dom_data(page, dom_selectors)
-                        if dom_data:
-                            synth = _build_synthetic_event(target_event, dom_data, page.url)
-                            last_match["data"]["ecommerce"] = synth["data"]["ecommerce"]
-                            last_match["source"] = "datalayer+dom"
-                            exploration_log.append(f"{target_event}: DOM 데이터 보충 완료")
+                    continue
+            
+                logger.info(f"[ActiveExplorer] 목표 이벤트: {target_event}")
+            
+                # ── 우선순위 1: 클릭 트리거 → 클릭 후 dataLayer 먼저 확인 (DL/DOM 무관) ──
+                if target_event in click_triggers:
+                    trigger_sel = click_triggers[target_event]
+                    logger.info(f"[ActiveExplorer] DOM 모드: {target_event} → 클릭 {trigger_sel}")
+                    await close_popup(page)
+            
+                    dom_data_before = await _extract_dom_data(page, dom_selectors)
+                    click_result = await click(page, trigger_sel)
+            
+                    if click_result.success:
+                        await page.wait_for_timeout(2000)
+                        # 우선순위 1a: 클릭 후 dataLayer 이벤트 발화 여부 확인
+                        dl_events = await get_captured_events(page)
+                        dl_match = [
+                            e for e in dl_events
+                            if e not in captured_events
+                            and e.get("data", {}).get("event") == target_event
+                        ]
+                        if dl_match:
+                            for e in dl_match:
+                                captured_events.append(e)
+                            exploration_log.append(f"{target_event}: 클릭 후 dataLayer 캡처 성공")
                             event_capture_log.append({
                                 "event": target_event,
-                                "method": "datalayer_dom_supplement",
+                                "method": "click_trigger_datalayer",
                                 "result": "success",
-                                "selector": "",
-                                "notes": "dataLayer 이벤트 캡처 성공, ecommerce 파라미터 부족 → DOM으로 보충",
+                                "selector": trigger_sel,
+                                "notes": f"버튼 클릭({trigger_sel}) 후 dataLayer.push() 발화 확인",
                             })
+                        else:
+                            # 우선순위 1b: dataLayer 미발화 → DOM에서 직접 추출
+                            dom_data_after = await _extract_dom_data(page, dom_selectors)
+                            data = dom_data_after if dom_data_after else dom_data_before
+                            if data:
+                                synth = _build_synthetic_event(target_event, data, page.url)
+                                captured_events.append(synth)
+                                exploration_log.append(f"{target_event}: 클릭 후 DOM 추출 성공")
+                                logger.info(f"[ActiveExplorer] {target_event} DOM 추출 성공")
+                                event_capture_log.append({
+                                    "event": target_event,
+                                    "method": "click_trigger_dom",
+                                    "result": "success",
+                                    "selector": trigger_sel,
+                                    "notes": (
+                                        f"버튼 클릭({trigger_sel}) 후 dataLayer 미발화 → "
+                                        f"DOM에서 직접 데이터 추출"
+                                    ),
+                                })
+                            else:
+                                if target_event not in manual_required:
+                                    manual_required.append(target_event)
+                                exploration_log.append(f"{target_event}: DOM 추출 실패 → Manual")
+                                event_capture_log.append({
+                                    "event": target_event,
+                                    "method": "click_trigger_dom",
+                                    "result": "failed",
+                                    "selector": trigger_sel,
+                                    "notes": "버튼 클릭 후 dataLayer 미발화, DOM 추출도 실패 → Manual 이관",
+                                })
+                    else:
+                        logger.info(f"[ActiveExplorer] {target_event} 클릭 실패: {click_result.error}")
+                        if target_event not in manual_required:
+                            manual_required.append(target_event)
+                        exploration_log.append(f"{target_event}: 클릭 실패 → Manual")
+                        event_capture_log.append({
+                            "event": target_event,
+                            "method": "click_trigger_dom",
+                            "result": "failed",
+                            "selector": trigger_sel,
+                            "notes": f"버튼 클릭 실패 ({click_result.error}) → Manual 이관",
+                        })
+                    continue
+            
+                # ── 우선순위 2: LLM Navigator 루프 (dataLayer 기반) ──
+                result = await navigator.run_for_event(page, target_event, captured_events)
+            
+                if result == "captured":
+                    all_events = await get_captured_events(page)
+                    for e in all_events:
+                        if e not in captured_events:
+                            captured_events.append(e)
+                    exploration_log.append(f"{target_event}: 캡처 성공")
+            
+                    # 우선순위 2a: dataLayer에서 캡처됐지만 ecommerce 데이터 부족 → DOM 보충
+                    if use_dom and dom_selectors:
+                        last_match = next(
+                            (e for e in reversed(captured_events)
+                             if e.get("data", {}).get("event") == target_event),
+                            None,
+                        )
+                        if last_match and not last_match.get("data", {}).get("ecommerce"):
+                            dom_data = await _extract_dom_data(page, dom_selectors)
+                            if dom_data:
+                                synth = _build_synthetic_event(target_event, dom_data, page.url)
+                                last_match["data"]["ecommerce"] = synth["data"]["ecommerce"]
+                                last_match["source"] = "datalayer+dom"
+                                exploration_log.append(f"{target_event}: DOM 데이터 보충 완료")
+                                event_capture_log.append({
+                                    "event": target_event,
+                                    "method": "datalayer_dom_supplement",
+                                    "result": "success",
+                                    "selector": "",
+                                    "notes": "dataLayer 이벤트 캡처 성공, ecommerce 파라미터 부족 → DOM으로 보충",
+                                })
+                            else:
+                                event_capture_log.append({
+                                    "event": target_event,
+                                    "method": "navigator_datalayer",
+                                    "result": "success",
+                                    "selector": "",
+                                    "notes": "LLM Navigator로 dataLayer 이벤트 캡처",
+                                })
                         else:
                             event_capture_log.append({
                                 "event": target_event,
@@ -276,45 +293,40 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                                 "selector": "",
                                 "notes": "LLM Navigator로 dataLayer 이벤트 캡처",
                             })
-                    else:
-                        event_capture_log.append({
-                            "event": target_event,
-                            "method": "navigator_datalayer",
-                            "result": "success",
-                            "selector": "",
-                            "notes": "LLM Navigator로 dataLayer 이벤트 캡처",
-                        })
-            else:
-                # 우선순위 3: Navigator 실패 → DOM 폴백
-                if use_dom and dom_selectors:
-                    dom_data = await _extract_dom_data(page, dom_selectors)
-                    if dom_data:
-                        synth = _build_synthetic_event(target_event, dom_data, page.url)
-                        captured_events.append(synth)
-                        exploration_log.append(f"{target_event}: Navigator 실패 → DOM 폴백 성공")
-                        logger.info(f"[ActiveExplorer] {target_event} DOM 폴백 성공")
-                        event_capture_log.append({
-                            "event": target_event,
-                            "method": "dom_fallback",
-                            "result": "success",
-                            "selector": "",
-                            "notes": "LLM Navigator 실패 → DOM 직접 추출로 폴백",
-                        })
-                        continue
-
-                if target_event not in manual_required:
-                    manual_required.append(target_event)
-                exploration_log.append(f"{target_event}: 캡처 실패 → Manual로 이관")
-                event_capture_log.append({
-                    "event": target_event,
-                    "method": "manual",
-                    "result": "pending",
-                    "selector": "",
-                    "notes": "자동 캡처 모든 방법 실패 → Manual Capture Gateway로 이관",
-                })
-
-        await context.close()
-        await browser.close()
+                else:
+                    # 우선순위 3: Navigator 실패 → DOM 폴백
+                    if use_dom and dom_selectors:
+                        dom_data = await _extract_dom_data(page, dom_selectors)
+                        if dom_data:
+                            synth = _build_synthetic_event(target_event, dom_data, page.url)
+                            captured_events.append(synth)
+                            exploration_log.append(f"{target_event}: Navigator 실패 → DOM 폴백 성공")
+                            logger.info(f"[ActiveExplorer] {target_event} DOM 폴백 성공")
+                            event_capture_log.append({
+                                "event": target_event,
+                                "method": "dom_fallback",
+                                "result": "success",
+                                "selector": "",
+                                "notes": "LLM Navigator 실패 → DOM 직접 추출로 폴백",
+                            })
+                            continue
+            
+                    if target_event not in manual_required:
+                        manual_required.append(target_event)
+                    exploration_log.append(f"{target_event}: 캡처 실패 → Manual로 이관")
+                    event_capture_log.append({
+                        "event": target_event,
+                        "method": "manual",
+                        "result": "pending",
+                        "selector": "",
+                        "notes": "자동 캡처 모든 방법 실패 → Manual Capture Gateway로 이관",
+                    })
+            
+        finally:
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
     logger.info(f"[ActiveExplorer] 총 캡처 이벤트: {len(captured_events)}개")
     logger.info(f"[ActiveExplorer] Manual 이관: {manual_required}")
