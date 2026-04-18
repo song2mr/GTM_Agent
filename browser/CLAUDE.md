@@ -57,6 +57,10 @@ diagnose_datalayer(page) -> str      # "full" | "partial" | "none"
 4. 결과(성공/실패/이벤트 발화 여부)를 `_action_history`에 누적
 5. `MAX_STEPS` 소진 시 해당 이벤트를 `manual_required`로 이관
 
+`run_for_event`에서 액션 성공 후 이벤트가 아직 없을 때도 히스토리는 **`self._action_history.append`** 로만 누적해야 한다(잘못된 변수명은 `NameError`로 에이전트 스레드가 종료되어 UI가 무한 대기처럼 보일 수 있음).
+
+`ChatOpenAI(..., timeout=...)` 로 LLM 호출 상한을 두고, 호출 직전 `emit("thought", …)` 로 UI에 진행 중임을 알린다.
+
 ### 스텝 정책
 
 - `MAX_STEPS = 8` — 재시도가 아닌 멀티스텝 탐색 한도

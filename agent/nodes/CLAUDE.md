@@ -84,6 +84,8 @@ DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(C
 - `EVENT_CAPTURE_GUIDE`는 "어떤 조건이 충족되어야 발화되는가" 목표 중심으로 서술
 - 클릭 실패·타임아웃은 `ActionResult.success=False`로 처리, 예외 미발생
 
+**브라우저**: `GTM_AI_HEADLESS=1|true|yes`이면 headless 실행(`serve_ui`가 미설정 시 기본으로 넣음). CLI에서 창을 보려면 환경 변수를 비우거나 `0`으로 둔다.
+
 **UI 동기화**: `manual_required`가 비어 있으면 Manual Capture 노드는 그래프에서 호출되지 않으므로, 탐색 종료 시 `nodes_status={"manual_capture": "skip"}`를 기록한다.
 
 **event_capture_log 항목 구조**
