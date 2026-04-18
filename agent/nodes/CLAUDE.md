@@ -4,6 +4,12 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 
 ---
 
+## LLM 모델 (`config/llm_models.yaml`)
+
+노드·Navigator는 `config.llm_models_loader.llm_model("<zone>")`으로 모델 ID를 읽는다. 구역 키 예: `page_classifier`, `structure_analyzer`, `journey_planner`, `planning`, `navigator`, `cart_addition_navigator`, `begin_checkout_navigator`. `browser.LLMNavigator` 등에 생성자 인자 `model=`을 넘기면 YAML보다 우선한다.
+
+---
+
 ## Node 1 — `page_classifier.py`
 
 **역할**: 페이지 로드 + Persistent Event Listener 주입 + 페이지 타입 판단 + 로드타임 이벤트 수집

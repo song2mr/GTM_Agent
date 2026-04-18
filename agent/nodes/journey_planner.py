@@ -15,6 +15,7 @@ from agent.commerce_events import (
     fallback_cart_addition_events,
 )
 from agent.state import GTMAgentState
+from config.llm_models_loader import llm_model
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit, update_state
@@ -168,7 +169,7 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
             )
         ),
     ]
-    llm = make_chat_llm(model="gpt-5.1")
+    llm = make_chat_llm(model=llm_model("journey_planner"))
     try:
         response = await llm.ainvoke(messages)
         token_tracker.track("journey_planner", response)

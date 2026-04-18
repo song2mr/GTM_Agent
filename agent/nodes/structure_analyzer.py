@@ -20,6 +20,7 @@ import time
 
 from agent.state import GTMAgentState
 from browser.actions import get_page_snapshot, navigate
+from config.llm_models_loader import llm_model
 from browser.listener import inject_listener
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
@@ -296,7 +297,7 @@ URL: {url}
         HumanMessage(content=content),
     ]
     try:
-        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+        response = await make_chat_llm(model=llm_model("structure_analyzer")).ainvoke(messages)
     except Exception as e:
         logger.error(f"[StructureAnalyzer] _analyze_html LLM 호출 실패: {e}")
         return {}
@@ -345,7 +346,7 @@ async def _analyze_json_ld(json_ld_data: Any, page: Page) -> dict:
         HumanMessage(content=content),
     ]
     try:
-        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+        response = await make_chat_llm(model=llm_model("structure_analyzer")).ainvoke(messages)
     except Exception as e:
         logger.error(f"[StructureAnalyzer] _analyze_json_ld LLM 호출 실패: {e}")
         return {"validated": {}}
@@ -468,7 +469,7 @@ URL: {url}
         HumanMessage(content=content),
     ]
     try:
-        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+        response = await make_chat_llm(model=llm_model("structure_analyzer")).ainvoke(messages)
     except Exception as e:
         logger.error(f"[StructureAnalyzer] _retry_missing LLM 호출 실패: {e}")
         return {}

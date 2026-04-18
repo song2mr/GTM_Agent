@@ -30,9 +30,11 @@ gtm_ai/
 ├── docs/
 │   └── CLAUDE.md              ← 문서 fetch 전략, 폴백 처리
 ├── config/
-│   ├── CLAUDE.md              ← media_sources, exploration_limits 등 설정
+│   ├── CLAUDE.md              ← media_sources, exploration_limits, llm_models 등 설정
 │   ├── exploration_limits.yaml  ← 전용 탐색 노드 LLM 스텝 상한
-│   └── exploration_limits_loader.py
+│   ├── exploration_limits_loader.py
+│   ├── llm_models.yaml          ← 구역(zone)별 OpenAI 채팅 모델 ID
+│   └── llm_models_loader.py
 └── ui/
     └── CLAUDE.md              ← UI 아키텍처, 훅, 화면 구성, 데이터 흐름
 ```
@@ -95,4 +97,5 @@ Playwright 창: `serve_ui` / 노드 공통으로 `GTM_AI_HEADLESS`가 `1|true|ye
 - **`captured_events` 중복 판정은 `browser.listener.event_fingerprint`로 튜플화한 뒤 `set`으로 비교**한다. dict 동등성(`in`) 비교는 메타 필드가 추가되면 깨진다.
 - **`browser.close()` 예외는 `logger.debug`로 남긴다**. `except Exception: pass`로 완전히 삼키지 않는다.
 - **Navigator 스텝 상한은 `config/exploration_limits.yaml`에서 로드**한다(`navigator` / `cart_addition` / `begin_checkout`).
+- **노드·Navigator별 LLM 모델 ID는 `config/llm_models.yaml`**에서 로드한다(`config.llm_models_loader.llm_model`). Navigator 생성자에 `model=`을 넘기면 YAML보다 우선한다.
 - **사용자 대면이 아닌 로그는 `utils.logger`만 사용**한다(`print()` 금지). CLI HITL 프롬프트처럼 사용자가 직접 읽어야 하는 출력만 `print` 허용.

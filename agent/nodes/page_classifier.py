@@ -8,21 +8,19 @@ LLM으로 페이지 타입(PLP/PDP/cart/checkout/기타)을 판단합니다.
 from __future__ import annotations
 
 import os
-
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from playwright.async_api import async_playwright
-
 import time
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from playwright.async_api import async_playwright
+
 from agent.state import GTMAgentState
+from config.llm_models_loader import llm_model
 from gtm.client import GTMClient
 from browser.actions import get_page_snapshot
 from browser.listener import diagnose_datalayer, get_captured_events, inject_listener
 from utils import logger, token_tracker
+from utils.llm_json import make_chat_llm
 from utils.ui_emitter import emit, update_state
-
-_llm = ChatOpenAI(model="gpt-5.1")
 
 _CLASSIFY_SYSTEM = """당신은 웹 페이지를 분석하는 전문가입니다.
 HTML 스냅샷을 보고 페이지 타입을 판단하세요.
@@ -88,7 +86,8 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
                 SystemMessage(content=_CLASSIFY_SYSTEM),
                 HumanMessage(content=f"URL: {target_url}\n\nHTML:\n{snapshot}"),
             ]
-            response = await _llm.ainvoke(messages)
+            llm = make_chat_llm(model=llm_model("page_classifier"), timeout=120.0)
+            response = await llm.ainvoke(messages)
             token_tracker.track("page_classifier", response)
             page_type = response.content.strip().split()[0].lower()
             valid_types = {"plp", "pdp", "cart", "checkout", "home", "unknown"}

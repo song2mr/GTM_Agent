@@ -11,8 +11,8 @@ Playwright 기반 브라우저 자동화 레이어.
 |------|------|
 | `listener.py` | dataLayer Persistent Event Listener 주입·조회·진단 |
 | `navigator.py` | LLM Navigator 루프 (이벤트별 탐색 전략) |
-| `cart_addition_navigator.py` | 장바구니 담기 전용 Navigator (스텝 상한은 `config/exploration_limits.yaml`) |
-| `begin_checkout_navigator.py` | 결제 시작 전용 Navigator (동일) |
+| `cart_addition_navigator.py` | 장바구니 담기 전용 Navigator (스텝 상한 `config/exploration_limits.yaml`, 채팅 모델 `config/llm_models.yaml`의 `cart_addition_navigator`) |
+| `begin_checkout_navigator.py` | 결제 시작 전용 Navigator (스텝 상한 동일, 모델 키 `begin_checkout_navigator`) |
 | `actions.py` | click / navigate / scroll / form_fill / **select_option** / **set_location_hash** 래퍼 |
 
 ---
@@ -78,6 +78,7 @@ Navigator / Explorer에서 `captured_so_far`에 대한 `in` 비교는 금지.
 ### 스텝 정책
 
 - `MAX_STEPS`는 `config/exploration_limits.yaml`의 `navigator.max_llm_steps`에서 로드(기본 6). Cart/Begin Checkout Navigator와 동일 방식으로 튜닝한다.
+- 채팅 모델 ID는 `config/llm_models.yaml`의 `navigator` / `cart_addition_navigator` / `begin_checkout_navigator` 구역을 쓴다(`llm_model(...)`). 생성자에 `model=`을 주면 YAML을 덮어쓴다.
 - 재시도가 아닌 멀티스텝 탐색 한도
 - 액션 성공 but 이벤트 미발화 → "선행 조건이 있다는 신호"로 LLM에 전달, 다음 스텝 진행
 - 액션 실패 → 에러 메시지를 히스토리에 기록, LLM이 다른 selector 시도

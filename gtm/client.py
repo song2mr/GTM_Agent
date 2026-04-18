@@ -36,6 +36,71 @@ class GTMClient:
     def _container_path(self) -> str:
         return f"accounts/{self.account_id}/containers/{self.container_id}"
 
+    def verify_and_resolve_container_id(self) -> str:
+        """GTM API로 컨테이너 존재·접근 가능 여부를 확인하고, API path용 containerId를 반환합니다.
+
+        Tag Manager API 경로에는 숫자 `containerId`가 쓰입니다. 사용자가 `GTM-XXXX` 형식
+        (publicId)을 넣은 경우, 계정 하위 컨테이너 목록에서 매칭해 숫자 ID로 변환합니다.
+
+        Raises:
+            ValueError: Account/Container ID가 비어 있는 경우
+            RuntimeError: 컨테이너가 없거나 권한이 없는 경우
+        """
+        aid = str(self.account_id).strip()
+        cid = str(self.container_id).strip()
+        if not aid:
+            raise ValueError("GTM Account ID가 비어 있습니다.")
+        if not cid:
+            raise ValueError("GTM Container ID가 비어 있습니다.")
+
+        path = f"accounts/{aid}/containers/{cid}"
+        try:
+            data = (
+                self._service.accounts().containers().get(path=path).execute()
+            )
+            resolved = str(data.get("containerId", cid))
+            self.account_id = aid
+            self.container_id = resolved
+            return resolved
+        except HttpError as e:
+            status = getattr(e.resp, "status", None)
+            if status == 404 and cid.upper().startswith("GTM-"):
+                try:
+                    listed = (
+                        self._service.accounts()
+                        .containers()
+                        .list(parent=f"accounts/{aid}")
+                        .execute()
+                    )
+                except HttpError as e2:
+                    st2 = getattr(e2.resp, "status", "?")
+                    raise RuntimeError(
+                        "GTM 컨테이너 목록을 조회할 수 없습니다 (HTTP "
+                        f"{st2}). Account ID와 OAuth 권한을 확인하세요."
+                    ) from e2
+                want = cid.upper()
+                for c in listed.get("container", []) or []:
+                    pub = (c.get("publicId") or "").upper()
+                    if pub == want:
+                        resolved = str(c["containerId"])
+                        self.account_id = aid
+                        self.container_id = resolved
+                        return resolved
+                raise RuntimeError(
+                    f"이 계정(accounts/{aid})에서 공개 ID '{cid}'에 해당하는 "
+                    "컨테이너를 찾을 수 없습니다. Tag Manager에서 컨테이너를 만든 뒤 "
+                    "ID를 다시 확인하세요."
+                ) from e
+            if status in (403, 404):
+                raise RuntimeError(
+                    f"GTM 컨테이너에 접근할 수 없습니다 (HTTP {status}). "
+                    "Account ID·Container ID(숫자 또는 해당 계정의 GTM-XXXX)가 맞는지, "
+                    "이 컨테이너에 대한 Tag Manager API 권한이 있는지 확인하세요."
+                ) from e
+            raise RuntimeError(
+                f"GTM 컨테이너 확인 중 오류 (HTTP {status}): {e}"
+            ) from e
+
     def _workspace_path(self, workspace_id: str) -> str:
         return (
             f"accounts/{self.account_id}/containers/{self.container_id}"

@@ -23,6 +23,7 @@ from browser.actions import (
 )
 from browser.listener import event_fingerprint, get_captured_events
 from config.exploration_limits_loader import navigator_max_llm_steps
+from config.llm_models_loader import llm_model
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit
@@ -254,10 +255,12 @@ action 설명:
 
 
 class LLMNavigator:
-    def __init__(self, model: str = "gpt-5.1"):
+    def __init__(self, model: str | None = None):
         # lazy 팩토리: 임포트 시점이 아닌 인스턴스 생성 시점에 생성
         # (timeout은 LLM 무응답 시 UI가 무한 대기처럼 보이지 않게 하는 상한)
-        self._llm = make_chat_llm(model=model, timeout=120.0)
+        # model이 None이면 config/llm_models.yaml 의 navigator 구역 사용
+        resolved = llm_model("navigator") if model is None else model
+        self._llm = make_chat_llm(model=resolved, timeout=120.0)
         self._action_history: list[dict] = []  # 이벤트 간 공유, 세션 내 누적
 
     async def decide_next_action(

@@ -25,6 +25,7 @@ from browser.actions import (
 )
 from browser.listener import event_fingerprint, get_captured_events
 from config.exploration_limits_loader import begin_checkout_max_llm_steps
+from config.llm_models_loader import llm_model
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit
@@ -89,9 +90,10 @@ _CHECKOUT_SYSTEM_PROMPT = """당신은 한국 이커머스에서 **결제 시작
 
 
 class BeginCheckoutNavigator:
-    def __init__(self, model: str = "gpt-5.1"):
+    def __init__(self, model: str | None = None):
         # lazy 팩토리로 ChatOpenAI 생성 — 임포트 시점 API 키 의존 제거
-        self._llm = make_chat_llm(model=model, timeout=120.0)
+        resolved = llm_model("begin_checkout_navigator") if model is None else model
+        self._llm = make_chat_llm(model=resolved, timeout=120.0)
         self._action_history: list[dict] = []
         # config/exploration_limits.yaml — begin_checkout.max_llm_steps
         self._max_steps = begin_checkout_max_llm_steps()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from agent.graph import compile_graph
 from agent.state import GTMAgentState
+from gtm.client import GTMClient
 from utils import logger
 from utils.ui_emitter import (
     emit,
@@ -48,6 +49,46 @@ async def run_agent(config: dict) -> dict:
     set_run_dir(run_dir)
 
     run_id = Path(run_dir).name
+
+    # GTM 컨테이너 사전 검증 (브라우저·LLM 탐색 전, 비용·시간 절약)
+    try:
+        preflight = GTMClient(account_id=account_id, container_id=container_id)
+        resolved_container_id = preflight.verify_and_resolve_container_id()
+        if resolved_container_id != container_id:
+            logger.info(
+                f"[runner] Container ID를 API용으로 확정: "
+                f"{container_id!r} → {resolved_container_id!r}"
+            )
+            container_id = resolved_container_id
+    except Exception as e:
+        err = str(e)
+        logger.info(f"[runner] GTM 컨테이너 사전 검증 실패: {err}")
+        emit(
+            "run_end",
+            report_path=None,
+            duration_ms=0,
+            token_usage={},
+        )
+        update_state(
+            status="failed",
+            current_node=0,
+            error=err,
+        )
+        try:
+            write_history_index(Path(run_dir).parent)
+        except Exception:
+            pass
+        return {
+            **({"run_id": run_id} if run_id else {}),
+            "user_request": user_request,
+            "target_url": target_url,
+            "tag_type": tag_type,
+            "account_id": account_id,
+            "container_id": container_id,
+            "workspace_id": workspace_id,
+            "measurement_id": measurement_id,
+            "error": err,
+        }
 
     # 초기 state.json 스냅샷
     update_state(

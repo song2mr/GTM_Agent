@@ -1,0 +1,27 @@
+# 구역(zone)별 Chat 모델 ID (OpenAI Chat Completions / LangChain ChatOpenAI).
+#
+# 공식 가이드 요약 (platform.openai.com/docs/models, reasoning 가이드):
+# - 복잡한 추론·코드·다단계 에이전트 → gpt-5.4
+# - 지연·비용을 줄이면서도 추론이 필요한 작업 → gpt-5.4-mini
+# - 분류·라우팅·단순 변환 등 고처리량·저비용 → gpt-5.4-nano
+#
+# 계정에 아직 5.4 계열이 없으면 default 를 gpt-5.1 등으로 바꾸면 됩니다.
+
+default: gpt-5.4
+
+# 한 스냅샷으로 PLP/PDP/cart 등 짧은 라벨 분류 → nano
+page_classifier: gpt-5.4-nano
+
+# HTML·JSON-LD에서 셀렉터 추출·검증 — 문서 이해·정확도
+structure_analyzer: gpt-5.4
+
+# GTM Variable/Trigger/Tag 설계안 — 규칙 많은 구조화 출력
+planning: gpt-5.4
+
+# 탐색 큐·이벤트 목표 계획 — 중간 복잡도
+journey_planner: gpt-5.4-mini
+
+# 브라우저: 스텝마다 스냅샷+히스토리로 다음 액션 결정 — 에이전트에 가까운 다단계
+navigator: gpt-5.4
+cart_addition_navigator: gpt-5.4
+begin_checkout_navigator: gpt-5.4

@@ -106,3 +106,5 @@ config = {
 ```
 
 `serve_ui.py`는 `hitl_mode="file"`을 주입해 파일 기반 HITL을 활성화한다.
+
+노드별 OpenAI 채팅 모델은 **`config/llm_models.yaml`**에서 구역(zone) 키로 조정한다(`config/CLAUDE.md`, `agent/nodes/CLAUDE.md` 참고).

@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import time
 
 from agent.state import GTMAgentState
+from config.llm_models_loader import llm_model
 from docs.fetcher import fetch_docs_for_media
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
@@ -367,7 +368,7 @@ async def _generate_plan(
         HumanMessage(content="\n".join(content_parts)),
     ]
     try:
-        response = await make_chat_llm(model="gpt-5.1").ainvoke(messages)
+        response = await make_chat_llm(model=llm_model("planning")).ainvoke(messages)
     except Exception as e:
         logger.error(f"[Planning] LLM 호출 실패 → 빈 설계안 반환: {e}")
         return {"variables": [], "triggers": [], "tags": []}
