@@ -52,11 +52,13 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 **출력**: `exploration_queue`, `auto_capturable`, `cart_addition_events`, `begin_checkout_events`, `manual_required`
 
 - `cart_addition_events` / `begin_checkout_events`: LLM이 JSON으로 지정(이름은 `exploration_queue`와 동일). 필드 누락 시 `agent/commerce_events.py`의 `fallback_cart_addition_events` / `fallback_begin_checkout_events`로 GA4 기본명만 폴백.
+- **`exploration_queue` 정규화**: `_normalize_and_sort_exploration_queue`가 중복 제거·`_EXPLORATION_RANK` 기준 stable sort를 수행한다. **`purchase`·`refund`는 `EXCLUDE_FROM_EXPLORATION_QUEUE`로 큐에서 제거**되고 `exploration_log`에 사유가 붙는다. 사용자 요청 문자열에 해당 단어가 있으면 `manual_required`에만 추가된다(자동 탐색 대상 아님).
 
 **분류 기준**
 ```python
 MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
-# 그 외 모든 이벤트 → auto_capturable
+EXCLUDE_FROM_EXPLORATION_QUEUE = frozenset({"purchase", "refund"})
+# 그 외 큐에 남은 이벤트 → auto_capturable
 ```
 
 **LLM 폴백**: 파싱 실패 시 `_default_queue(page_type, user_request)` 호출.

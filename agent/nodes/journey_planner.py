@@ -26,8 +26,63 @@ _llm = ChatOpenAI(model="gpt-5.1")
 # 자동화 불가 이벤트 (Manual Capture Gateway로 전환)
 MANUAL_REQUIRED_EVENTS = {"purchase", "refund"}
 
+# 브라우저 자동 탐색 큐에 넣지 않음 — Active/Cart/Checkout 노드 미실행
+EXCLUDE_FROM_EXPLORATION_QUEUE = frozenset({"purchase", "refund"})
+
+_EXCLUDE_QUEUE_REASONS: dict[str, str] = {
+    "purchase": "결제 완료·실결제 플로우; GTM 설계/Manual에서만 다룸",
+    "refund": "환불/취소는 서버·백오피스 플로우 중심; GTM 설계/Manual에서만 다룸",
+}
+
 # 부분 자동화 (더미 데이터 폼 입력)
 PARTIAL_AUTO_EVENTS = {"add_shipping_info", "add_payment_info"}
+
+# GA4 이커머스 “설치형” 이벤트의 권장 **상대 순서** (숫자 작을수록 먼저).
+# 큐에 없는 이름은 건너뛰고, **여기 없는 커스텀 이벤트**는 rank 1000 + LLM이 준 순서 유지.
+_EXPLORATION_RANK: dict[str, int] = {
+    "page_view": 0,
+    "view_promotion": 5,
+    "view_item_list": 10,
+    "select_item": 20,
+    "view_item": 30,
+    "add_to_wishlist": 35,
+    "add_to_cart": 40,
+    "view_cart": 50,
+    "remove_from_cart": 55,
+    "begin_checkout": 60,
+    "add_shipping_info": 70,
+    "add_payment_info": 80,
+}
+
+
+def _normalize_and_sort_exploration_queue(queue: list[str]) -> tuple[list[str], list[str]]:
+    """중복 제거·표준 순서 정렬·purchase/refund 등 탐색 제외.
+
+    Returns:
+        (정렬된 큐, 사람이 읽을 로그 메시지 목록)
+    """
+    notes: list[str] = []
+    raw = [(str(e) or "").strip() for e in queue if e and str(e).strip()]
+    filtered: list[str] = []
+    for name in raw:
+        if name in EXCLUDE_FROM_EXPLORATION_QUEUE:
+            detail = _EXCLUDE_QUEUE_REASONS.get(name, "GTM 설계/Manual에서만 다룸")
+            notes.append(f"{name}: 자동 브라우저 탐색 큐에서 제외 ({detail})")
+            continue
+        filtered.append(name)
+
+    dedup: list[str] = []
+    seen: set[str] = set()
+    for name in filtered:
+        if name not in seen:
+            seen.add(name)
+            dedup.append(name)
+
+    decorated = [(name, i) for i, name in enumerate(dedup)]
+    decorated.sort(
+        key=lambda pair: (_EXPLORATION_RANK.get(pair[0], 1000), pair[1]),
+    )
+    return [pair[0] for pair in decorated], notes
 
 _PLANNER_SYSTEM = """당신은 GTM 이벤트 탐색 전략가입니다.
 페이지 타입, 사용자 요청, 현재 페이지 URL을 보고 캡처해야 할 GA4 이벤트 목록을 생성하세요.
@@ -62,23 +117,27 @@ _PLANNER_SYSTEM = """당신은 GTM 이벤트 탐색 전략가입니다.
 - view_cart: 장바구니 페이지
 - begin_checkout: 결제 시작
 - add_shipping_info, add_payment_info: 결제 단계
-- 자동화 불가 (항상 제외): purchase, refund
+- **purchase**, **refund**: **exploration_queue에 넣지 마세요.** (서버가 넣어도 제거. 자동 탐색 미지원, Manual/설계만)
 
 == 커스텀/비표준 이벤트 처리 ==
 사용자 요청에 아래 이벤트가 포함되면 exploration_queue에 추가하세요:
 - add_to_wishlist: 상품 찜하기/위시리스트 버튼 클릭 이벤트
   (한국 쇼핑몰: ♡ 하트, '찜', '찜하기', '관심상품' 버튼)
   → PLP 상품 카드의 찜 버튼 또는 PDP의 찜 버튼에서 캡처 가능
-  → purchase/refund가 아니므로 auto_capturable로 분류
+  → purchase·refund 제외, auto_capturable로 분류
 - select_item: PLP에서 상품 클릭
 - 기타 사용자 요청에 명시된 이벤트명: auto_capturable로 처리
 
-== 탐색 순서 원칙 ==
-1. page_view는 항상 첫 번째
-2. 현재 페이지가 홈/PLP이고 view_item이 필요하면: view_item_list → view_item 순서로
-3. add_to_cart는 view_item 다음에 (PDP에서 연속 캡처 가능)
-4. add_to_wishlist는 add_to_cart와 같은 PDP/PLP에서 캡처 가능하므로 인접 배치
-5. 자동화 불가 이벤트(purchase, refund)는 큐에서 제외
+== 탐색 순서 원칙 (고정 설치 시 권장 순서) ==
+서버가 큐를 **표준 순서로 다시 정렬**한다. LLM은 아래 의도에 맞게 나열하면 된다.
+
+1. `page_view` 항상 첫째.
+2. 목록·진입: `view_promotion`(있으면) → `view_item_list` → `select_item`(PLP에서 PDP로) → `view_item`.
+3. **핵심 PDP 이후**: `view_item` → `add_to_cart` → (장바구니 측정이면) `view_cart` → **`begin_checkout`**.
+   즉 **view_item → add_to_cart → begin_checkout** 상대 순서를 지키고, 그 사이에 `view_cart`가 있으면 `begin_checkout` 앞에 둔다.
+4. `add_to_wishlist`는 보통 `view_item`과 `add_to_cart` 사이·인접(같은 PDP).
+5. 결제 단계: `begin_checkout` 다음 `add_shipping_info` → `add_payment_info`.
+6. **purchase·refund는 절대 `exploration_queue`에 넣지 마세요** (서버가 넣어도 둘 다 제거).
 
 == 탐색 전용 노드 ==
 - `cart_addition_events` → Node 3.25 (옵션·담기 UI)
@@ -107,7 +166,9 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
                 f"사용자 요청: {user_request}\n"
                 f"태그 유형: {tag_type}\n\n"
                 "JSON에 cart_addition_events, begin_checkout_events를 반드시 포함하세요(해당 없으면 []). "
-                "각 배열의 이름은 exploration_queue에 나온 문자열과 **완전히 동일**해야 합니다."
+                "각 배열의 이름은 exploration_queue에 나온 문자열과 **완전히 동일**해야 합니다.\n\n"
+                "서버가 exploration_queue를 **표준 이커머스 순으로 정렬**하고 purchase·refund는 제거합니다. "
+                "view_item → add_to_cart → (view_cart) → begin_checkout 의존 순서를 지키세요."
             )
         ),
     ]
@@ -132,6 +193,8 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
         planner_cart = None
         planner_begin = None
         queue = _default_queue(page_type, user_request)
+
+    queue, queue_notes = _normalize_and_sort_exploration_queue(queue)
 
     # purchase/refund만 manual_required — 나머지는 모두 auto_capturable
     # (add_to_wishlist 등 커스텀 이벤트 포함)
@@ -192,7 +255,8 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
         "begin_checkout_events": begin_checkout_events,
         "manual_required": manual_required,
         "exploration_log": state.get("exploration_log", [])
-        + [f"탐색 큐 생성: {queue}"],
+        + [f"탐색 큐 생성(정렬·검증 후): {queue}"]
+        + queue_notes,
     }
 
 
@@ -202,12 +266,12 @@ def _default_queue(page_type: str, user_request: str = "") -> list[str]:
     사용자 요청에 명시된 이벤트가 있으면 기본 큐에 추가합니다.
     """
     defaults: dict[str, list[str]] = {
-        "plp":      ["page_view", "view_item_list", "view_item", "add_to_cart"],
-        "pdp":      ["page_view", "view_item", "add_to_cart"],
-        "cart":     ["page_view", "view_cart", "begin_checkout"],
+        "plp": ["page_view", "view_item_list", "select_item", "view_item", "add_to_cart"],
+        "pdp": ["page_view", "view_item", "add_to_cart"],
+        "cart": ["page_view", "view_cart", "begin_checkout"],
         "checkout": ["page_view", "begin_checkout", "add_shipping_info", "add_payment_info"],
-        "home":     ["page_view", "view_item_list", "view_item", "add_to_cart"],
-        "unknown":  ["page_view", "view_item", "add_to_cart"],
+        "home": ["page_view", "view_item_list", "select_item", "view_item", "add_to_cart"],
+        "unknown": ["page_view", "view_item", "add_to_cart"],
     }
     queue = list(defaults.get(page_type, ["page_view"]))
 
