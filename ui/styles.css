@@ -491,6 +491,7 @@ kbd {
 }
 .tl-node.done .tl-line { background: var(--ink-1); }
 .tl-node.run  .tl-line { background: linear-gradient(to bottom, var(--accent) 50%, var(--line) 50%); }
+.tl-node.skip .tl-line { background: var(--line); opacity: 0.65; }
 .tl-node:last-child .tl-line { display: none; }
 
 .tl-title {

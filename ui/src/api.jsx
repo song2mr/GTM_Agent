@@ -10,6 +10,7 @@ window.useRunLog = function useRunLog(runId) {
   const [plan, setPlan] = React.useState(null);
   const [publishResult, setPublishResult] = React.useState(null);
   const offsetRef = React.useRef(0);
+  const lastNodeKeyRef = React.useRef("");
 
   const base = `../logs/${runId}`;
 
@@ -17,6 +18,7 @@ window.useRunLog = function useRunLog(runId) {
     if (!runId) return;
     let alive = true;
     offsetRef.current = 0;
+    lastNodeKeyRef.current = "";
     setEvents([]);
     setThoughts([]);
     setPlan(null);
@@ -41,7 +43,9 @@ window.useRunLog = function useRunLog(runId) {
           for (const line of lines) {
             let ev;
             try { ev = JSON.parse(line); } catch { continue; }
-            if (ev.type === "datalayer_event") {
+            if (ev.type === "node_enter" && ev.node_key) {
+              lastNodeKeyRef.current = ev.node_key;
+            } else if (ev.type === "datalayer_event") {
               setEvents(cur => [...cur, {
                 t: ev.ts.slice(11, 23),
                 event: ev.event,
@@ -56,6 +60,7 @@ window.useRunLog = function useRunLog(runId) {
                 time: ev.ts.slice(11, 19),
                 kind: ev.kind || "plain",
                 text: ev.text,
+                nodeKey: lastNodeKeyRef.current || undefined,
               }]);
             } else if (ev.type === "hitl_request") {
               setPlan(ev.plan);

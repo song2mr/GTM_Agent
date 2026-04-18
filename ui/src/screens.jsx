@@ -214,11 +214,31 @@ function RunLiveScreen({ runId }) {
   const nodes = state.nodes || [];
   const [activeId, setActiveId] = useState(null);
 
+  useEffect(() => { setActiveId(null); }, [runId]);
+
   const currentNodeId = state.current_node;
-  const displayActiveId = activeId ?? currentNodeId ?? (nodes[0] && nodes[0].id);
-  const activeNode = nodes.find(n => n.id === displayActiveId)
-    || nodes.find(n => n.status === "run")
-    || nodes[0];
+  const terminal = state.status === "done" || state.status === "failed";
+  const defaultHighlightId = (() => {
+    if (!nodes.length) return null;
+    if (terminal) {
+      const doneish = n =>
+        n.status === "done" || n.status === "failed" || n.status === "skip";
+      const last = [...nodes].reverse().find(doneish);
+      return last ? last.id : nodes[nodes.length - 1].id;
+    }
+    return nodes[0] && nodes[0].id;
+  })();
+  const displayActiveId =
+    activeId ?? currentNodeId ?? defaultHighlightId ?? (nodes[0] && nodes[0].id);
+
+  const activeNode = nodes.find(n => n.id === displayActiveId) || nodes[0];
+
+  const hasThoughtNodeKeys = thoughts.some(t => t.nodeKey);
+  const thoughtsForNode = !hasThoughtNodeKeys
+    ? thoughts
+    : thoughts.filter(
+        t => !t.nodeKey || (activeNode && t.nodeKey === activeNode.key),
+      );
 
   if (!runId) {
     return (
@@ -274,7 +294,7 @@ function RunLiveScreen({ runId }) {
                 <div className="panel-sub">{activeNode.status}</div>
               </div>
               <div className="panel-body">
-                <Thoughts items={thoughts} typing={isRunning} />
+                <Thoughts items={thoughtsForNode} typing={isRunning && activeNode && activeNode.status === "run"} />
               </div>
             </div>
           ) : null}

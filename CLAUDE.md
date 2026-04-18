@@ -43,7 +43,7 @@ gtm_ai/
 |------|----------|
 | Python | 3.11 |
 | LangGraph | >=0.2 |
-| langchain-anthropic | >=0.3 |
+| langchain-openai | >=0.2 |
 | Playwright | >=1.44 |
 | google-api-python-client | >=2.0 |
 | httpx | >=0.27 |
@@ -59,7 +59,7 @@ pip install -r requirements.txt
 playwright install chromium
 
 python gtm/auth.py        # OAuth 최초 인증 (한 번만)
-python serve_ui.py        # UI 서버 → http://localhost:8765/ui/
+python serve_ui.py        # UI 서버 → http://localhost:8766/ui/ (`serve_ui.py`의 PORT)
 python main.py            # CLI 직접 실행
 ```
 

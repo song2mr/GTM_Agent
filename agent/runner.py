@@ -129,7 +129,10 @@ async def run_agent(config: dict) -> dict:
         duration_ms=0,
         token_usage=usage,
     )
-    update_state(status="done" if not final_state.get("error") else "failed")
+    update_state(
+        status="done" if not final_state.get("error") else "failed",
+        current_node=8,
+    )
 
     # logs/index.json 갱신
     try:

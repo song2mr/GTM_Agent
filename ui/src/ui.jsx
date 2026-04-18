@@ -114,15 +114,17 @@ function Timeline({ nodes, activeId, onSelect }) {
     <div className="timeline">
       <div className="timeline-head">
         <h3>Node 진행 상황</h3>
-        <span className="muted-mono">{nodes.filter(n => n.status === "done").length}/{nodes.length}</span>
+        <span className="muted-mono">
+          {nodes.filter(n => ["done", "skip", "failed"].includes(n.status)).length}/{nodes.length}
+        </span>
       </div>
       <div className="tl-list">
         {nodes.map((n, i) => (
           <div key={n.id} className={`tl-node ${n.status} ${n.id === activeId ? "active" : ""}`}
                onClick={() => onSelect && onSelect(n.id)}>
             <div className="tl-spine">
-              <div className={`tl-bullet ${n.status}`}>
-                {n.status === "done" ? "✓" : String(n.id)}
+              <div className={`tl-bullet ${n.status === "skip" ? "skip" : n.status}`}>
+                {n.status === "done" ? "✓" : n.status === "skip" ? "−" : String(n.id)}
               </div>
               {i < nodes.length - 1 ? <div className="tl-line" /> : null}
             </div>
@@ -131,6 +133,8 @@ function Timeline({ nodes, activeId, onSelect }) {
                 {n.title}
                 {n.status === "run" ? <span className="chip accent"><span className="mini-dot" />running</span> : null}
                 {n.status === "queued" ? <span className="chip">queued</span> : null}
+                {n.status === "skip" ? <span className="chip">생략</span> : null}
+                {n.status === "failed" ? <span className="chip danger">failed</span> : null}
               </div>
               <div className="tl-desc">{n.sub}</div>
             </div>

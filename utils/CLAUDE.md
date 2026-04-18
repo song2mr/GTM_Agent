@@ -70,6 +70,15 @@ update_state(
 
 `logs/` 하위 모든 run을 스캔해 `logs/index.json` 갱신. History 화면이 이 파일을 읽는다.
 
+### reconcile_timeline_at_reporter(\*, has_error: bool)
+
+`reporter` 노드가 시작되기 **직전**에 한 번 호출된다 (`agent/nodes/reporter.py`).
+
+- LangGraph **분기로 실행되지 않은** 노드가 `state.json`에 `queued`로 남는 문제를 보정한다 → `skip`.
+- 비정상적으로 `run`으로 남은 이전 노드(예: GTM 생성 예외 후 미정리)를 `failed`(오류 있음) 또는 `done`(없음)으로 정리한다.
+
+UI 타임라인(`Timeline`)이 완료 Run에서도 **queued / 무한 running**으로 보이지 않게 한다.
+
 ---
 
 ## token_tracker.py

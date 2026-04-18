@@ -1,8 +1,8 @@
 # GTM AI Agent — Project Specification
 
 > 최초 작성: 2026-04-16  
-> 최종 수정: 2026-04-16 (Self-RAG → 실시간 문서 fetch로 전환)  
-> 상태: 구현 준비 완료
+> 최종 수정: 2026-04-18 (LLM 스택·UI 동기화 문서 반영)  
+> 상태: 구현 진행 중 (MVP 동작 + 로컬 UI)
 
 ---
 
@@ -24,10 +24,10 @@
 | 오케스트레이션 | LangGraph (StateGraph + Orchestrator-Workers) |
 | dataLayer 분석 | Playwright — JS 직접 실행으로 window.dataLayer 읽기 |
 | GTM 제어 | GTM API v2, OAuth 2.0 (개인 계정) |
-| LLM | Claude (Anthropic) |
+| LLM | OpenAI API (`langchain-openai`, 구현 기준) |
 | 매체 문서 조회 | 실시간 웹 fetch (Naver/Kakao 픽셀 공식 문서 URL → LLM 컨텍스트 직접 투입) |
 | 문서 URL 관리 | `config/media_sources.yaml` |
-| HITL 인터페이스 | 터미널 y/n 입력 |
+| HITL 인터페이스 | CLI 입력 또는 `serve_ui.py` + 파일(`hitl_response.json`) |
 | Computer Use | 미사용 (Playwright로 대체) |
 | Python | 3.11 |
 
@@ -35,7 +35,7 @@
 
 ```
 langgraph>=0.2
-langchain-anthropic>=0.3
+langchain-openai>=0.2
 playwright>=1.44
 google-api-python-client>=2.0
 google-auth-oauthlib>=1.0

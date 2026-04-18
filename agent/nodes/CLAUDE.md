@@ -18,6 +18,8 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 4. LLM에 HTML 스냅샷 전달 → PLP/PDP/cart/checkout/home/unknown 반환
 5. `datalayer_status` 결정: 이벤트 3개 이상 → "full", 1~2개 → "partial", 0개 → "none"
 
+**UI 동기화**: `datalayer_status == "full"`이면 그래프가 Structure Analyzer를 건너뛰므로, 노드 1.5가 `queued`로 남지 않게 `nodes_status={"structure_analyzer": "skip"}`를 기록한다.
+
 **주의**: `headless=False`는 CLI(`main.py`) 직접 실행 시에만 창이 보인다.
 `serve_ui.py`(백그라운드 스레드)에서는 창이 뜨지 않는다 — 의도된 동작.
 
@@ -81,6 +83,8 @@ DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(C
 - LLM이 히스토리를 보고 "현재 어느 단계인지" 스스로 판단해 다음 액션 결정
 - `EVENT_CAPTURE_GUIDE`는 "어떤 조건이 충족되어야 발화되는가" 목표 중심으로 서술
 - 클릭 실패·타임아웃은 `ActionResult.success=False`로 처리, 예외 미발생
+
+**UI 동기화**: `manual_required`가 비어 있으면 Manual Capture 노드는 그래프에서 호출되지 않으므로, 탐색 종료 시 `nodes_status={"manual_capture": "skip"}`를 기록한다.
 
 **event_capture_log 항목 구조**
 ```python
@@ -154,6 +158,11 @@ LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
 
 `plan` 자동 보정 (`_fix_plan`): 누락 트리거 생성 + 잘못된 `firing_trigger_names` 수정.
 
+**UI 동기화 (`state.json`)**
+- 성공·실패 모두 `_sync_created_resources_ui(...)`로 `workspace_id`, `created_variables` / `created_triggers` / `created_tags`를 `state.json`에 반영한다.  
+  (이전에는 성공 시에만 반영되어, 실패 Run에서 Report와 Resources 탭 내용이 어긋날 수 있었다.)
+- 설계안 없음·Workspace 생성 불가·예외 경로에서도 `gtm_creation` 노드 exit / `nodes_status`를 일관되게 남긴다.
+
 ---
 
 ## Node 7 — `publish.py`
@@ -181,6 +190,10 @@ Publish 권한 없으면 오류 대신 `publish_warning`에 메시지 기록 후
 
 **입력**: state 전체
 **출력**: `report_path` (`logs/{run_id}/report.md`)
+
+**UI 동기화**
+- 진입 직전 `reconcile_timeline_at_reporter(has_error=...)` 호출로 타임라인 `queued`/`run` 잔류를 정리한다.
+- `update_state`에서는 전역 `status`를 덮어쓰지 않는다(최종 `done`/`failed`는 `runner.py`가 기록).
 
 **보고서 섹션**
 1. 기본 정보 (URL, 태그 유형, 실행 시간)

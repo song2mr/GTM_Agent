@@ -1,4 +1,6 @@
 .env
+*.zip
+logs/
 credentials/
 .claude/settings.local.json
 __pycache__/

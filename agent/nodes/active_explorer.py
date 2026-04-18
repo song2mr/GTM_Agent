@@ -336,6 +336,9 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=3, status="done", duration_ms=_dur)
     update_state(nodes_status={"active_explorer": "done"})
+    # Manual Capture 노드는 그래프에서 건너뛰면 실행·emit이 없어 queued로 남음 → UI에서 skip 표시
+    if not manual_required:
+        update_state(nodes_status={"manual_capture": "skip"})
 
     return {
         **state,

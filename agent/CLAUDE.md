@@ -42,10 +42,19 @@ START
 |------|----------|
 | `route_after_classifier` | `datalayer_status == "full"` → `journey_planner`, 아니면 `structure_analyzer` |
 | `route_after_explorer` | `state["manual_required"]` 비어있으면 `planning`, 있으면 `manual_capture` |
-| `route_after_planning` | `state["plan_approved"]` → `gtm_creation`, `state["error"]` → `reporter` |
+| `route_after_planning` | `state["error"]` → `reporter`; 아니면 `plan_approved` → `gtm_creation`, 그 외 → `reporter` |
 | `route_after_creation` | `state["error"]` 없으면 `publish`, 있으면 `reporter` |
 
 reporter(Node 8)는 항상 마지막에 실행되며 오류 경로에서도 반드시 통과한다.
+
+---
+
+## runner 종료 시 UI 스냅샷
+
+`runner.run_agent` 마지막에 `update_state(status=..., current_node=8)`을 호출한다.  
+`current_node`가 비어 Live 화면 기본 하이라이트가 1번 노드로만 가는 문제를 줄인다.
+
+분기로 **실행되지 않은** 노드(`manual_capture`, `publish` 등)의 `queued`/`run` 잔류는 `reporter` 진입 시 `utils.ui_emitter.reconcile_timeline_at_reporter`와, Node 1·3의 선제 `skip` 갱신으로 보정한다.
 
 ---
 

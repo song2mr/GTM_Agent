@@ -22,7 +22,7 @@ import time
 
 from agent.state import GTMAgentState
 from utils import logger, token_tracker
-from utils.ui_emitter import emit, update_state
+from utils.ui_emitter import emit, reconcile_timeline_at_reporter, update_state
 
 # 처리 방식 레이블 (보고서 표시용)
 _METHOD_LABELS: dict[str, str] = {
@@ -51,6 +51,7 @@ _DATALAYER_METHODS = {"datalayer", "navigator_datalayer", "click_trigger_datalay
 
 async def reporter(state: GTMAgentState) -> GTMAgentState:
     """Node 8: 마크다운 보고서 생성 및 저장."""
+    reconcile_timeline_at_reporter(has_error=bool(state.get("error")))
     emit("node_enter", node_id=8, node_key="reporter", title="Reporter")
     update_state(current_node=8, nodes_status={"reporter": "run"})
     _started = time.time()
@@ -77,9 +78,9 @@ async def reporter(state: GTMAgentState) -> GTMAgentState:
 
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=8, status="done", duration_ms=_dur)
+    # 전체 status는 runner가 error 유무에 따라 마지막에 기록 (여기서 done으로 덮어쓰면 잠깐 어긋남)
     update_state(
         nodes_status={"reporter": "done"},
-        status="done",
         events_count=len(state.get("captured_events", [])),
         duration=f"{_dur // 1000}s",
     )

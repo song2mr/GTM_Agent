@@ -84,6 +84,37 @@ def write_plan(plan: dict) -> None:
     )
 
 
+def reconcile_timeline_at_reporter(*, has_error: bool) -> None:
+    """Reporter 진입 직전: 분기로 실행되지 않은 노드가 queued/run으로 남는 현상 보정.
+
+    - queued → skip (예: Manual Capture 경로 미진입, GTM 실패 후 Publish 미진입)
+    - run → failed(has_error) / done(비정상 잔류 복구)
+    """
+    if _run_dir is None:
+        return
+    path = _run_dir / "state.json"
+    with _lock:
+        current: dict = {}
+        if path.exists():
+            try:
+                current = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return
+        nodes = current.get("nodes", [])
+        for n in nodes:
+            if n.get("key") == "reporter":
+                continue
+            st = n.get("status", "")
+            if st == "queued":
+                n["status"] = "skip"
+            elif st == "run":
+                n["status"] = "failed" if has_error else "done"
+        current["nodes"] = nodes
+        path.write_text(
+            json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+
 def update_node_status(node_key: str, status: str) -> None:
     """state.json의 nodes 배열에서 특정 node_key의 status를 업데이트."""
     if _run_dir is None:

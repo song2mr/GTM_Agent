@@ -116,6 +116,9 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
     _dur = int((time.time() - _started) * 1000)
     emit("node_exit", node_id=1, status="done", duration_ms=_dur)
     update_state(nodes_status={"page_classifier": "done"})
+    # dataLayer full 이면 그래프가 Structure Analyzer를 건너뛰므로 타임라인에서 queued로 남지 않게 함
+    if datalayer_status == "full":
+        update_state(nodes_status={"structure_analyzer": "skip"})
 
     return {
         **state,

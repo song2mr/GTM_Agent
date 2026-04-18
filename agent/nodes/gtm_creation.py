@@ -15,12 +15,40 @@ from gtm.models import GTMParameter, GTMTag, GTMTrigger, GTMVariable
 from utils.ui_emitter import emit, update_state
 
 
+def _sync_created_resources_ui(
+    workspace_id: str,
+    created_variables: list[dict],
+    created_triggers: list[dict],
+    created_tags: list[dict],
+    *,
+    gtm_node_status: str,
+) -> None:
+    """Resources 탭(state.json)이 report.md와 동일 스냅샷을 보도록 GTM 생성 결과를 기록."""
+    update_state(
+        nodes_status={"gtm_creation": gtm_node_status},
+        workspace_id=workspace_id or "",
+        created_variables=[
+            {"name": v.get("name", ""), "id": v.get("variableId", "")}
+            for v in created_variables
+        ],
+        created_triggers=[
+            {"name": t.get("name", ""), "id": t.get("triggerId", "")}
+            for t in created_triggers
+        ],
+        created_tags=[
+            {"name": t.get("name", ""), "id": t.get("tagId", "")} for t in created_tags
+        ],
+    )
+
+
 async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     """Node 6: Workspace 생성 + Variable/Trigger/Tag 생성."""
     emit("node_enter", node_id=6, node_key="gtm_creation", title="GTM Creation")
     update_state(current_node=6, nodes_status={"gtm_creation": "run"})
     plan: dict = state.get("plan", {})
     if not plan:
+        emit("node_exit", node_id=6, status="failed", duration_ms=0)
+        update_state(nodes_status={"gtm_creation": "failed"})
         return {**state, "error": "설계안이 없습니다."}
 
     # Plan 자동 보정: 누락 트리거 생성 + 잘못된 firing_trigger_names 수정
@@ -67,7 +95,12 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
                 workspace_id = ai_ws[0]["workspaceId"]
                 print(f"[GTMCreation] 기존 Workspace 재사용: {ai_ws[0]['name']} (id={workspace_id})")
             else:
-                return {**state, "error": "Workspace 생성 실패: Rate Limit 초과 + 재사용 가능한 Workspace 없음"}
+                emit("node_exit", node_id=6, status="failed", duration_ms=0)
+                update_state(nodes_status={"gtm_creation": "failed"})
+                return {
+                    **state,
+                    "error": "Workspace 생성 실패: Rate Limit 초과 + 재사용 가능한 Workspace 없음",
+                }
 
         # 1. Variable 생성
         for var_spec in plan.get("variables", []):
@@ -97,6 +130,14 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     except Exception as e:
         error_msg = f"GTM 리소스 생성 중 오류: {e}"
         print(f"[GTMCreation] {error_msg}")
+        emit("node_exit", node_id=6, status="failed", duration_ms=0)
+        _sync_created_resources_ui(
+            workspace_id,
+            created_variables,
+            created_triggers,
+            created_tags,
+            gtm_node_status="failed",
+        )
         return {
             **state,
             "workspace_id": workspace_id,
@@ -121,12 +162,12 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
         emit("gtm_created", kind="tag", name=t.get("name", ""), operation="create")
 
     emit("node_exit", node_id=6, status="done", duration_ms=0)
-    update_state(
-        nodes_status={"gtm_creation": "done"},
-        workspace_id=workspace_id,
-        created_variables=[{"name": v.get("name", ""), "id": v.get("variableId", "")} for v in created_variables],
-        created_triggers=[{"name": t.get("name", ""), "id": t.get("triggerId", "")} for t in created_triggers],
-        created_tags=[{"name": t.get("name", ""), "id": t.get("tagId", "")} for t in created_tags],
+    _sync_created_resources_ui(
+        workspace_id,
+        created_variables,
+        created_triggers,
+        created_tags,
+        gtm_node_status="done",
     )
 
     return {

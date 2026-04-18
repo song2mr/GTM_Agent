@@ -34,12 +34,17 @@ serve_ui.py
 
 브라우저 폴링 (1.5초)
   ├─ logs/{run_id}/state.json    → useRunLog.state
-  ├─ logs/{run_id}/events.jsonl  → useRunLog.events / thoughts / plan / publishResult
+  ├─ logs/{run_id}/events.jsonl  → useRunLog.events / thoughts / plan / publishResult (`node_enter`로 thought에 nodeKey 태깅)
   ├─ logs/{run_id}/report.md     → useReport
   └─ logs/index.json             → useHistory
 ```
 
 모든 상태는 파일 기반 폴링으로 동기화된다. WebSocket 없음.
+
+**Live 타임라인 UX**
+- 노드 `status`: `queued` | `run` | `done` | `failed` | `skip` | `hitl_wait` 등. 분기 미진입 노드는 백엔드에서 `skip`으로 정리되는 경우가 많다.
+- 기본 하이라이트: 실행 중은 `current_node`, 종료(`done`/`failed`) 후에는 **마지막 완료·실패·생략 노드**를 강조해 첫 노드로만 포커스가 가는 문제를 방지한다.
+- 우측 Thought 패널: 선택한 타임라인 노드의 `key`와 `thought.nodeKey`가 일치하는 항목만 표시(구 로그는 태그 없으면 전체 표시).
 
 ---
 
@@ -49,9 +54,9 @@ serve_ui.py
 ```js
 const { state, events, thoughts, plan, publishResult } = useRunLog(runId)
 ```
-- `state`: `state.json` 전체 (nodes, status, token_usage 등)
+- `state`: `state.json` 전체 (nodes, status, token_usage, `created_*`, `workspace_id` 등)
 - `events`: `datalayer_event` 타입만 필터
-- `thoughts`: `thought` 타입만 필터
+- `thoughts`: `thought` 타입만 필터. 증분 파싱 시 직전 `node_enter`의 `node_key`를 `nodeKey` 필드로 붙여 **노드별 필터**에 사용
 - `plan`: 가장 최근 `hitl_request` 이벤트의 `plan`
 - `publishResult`: `publish_result` 이벤트
 
@@ -75,7 +80,7 @@ localStorage(`gtm:workspaces`, `gtm:activeWorkspace`) 기반.
 | Screen | route | 설명 |
 |--------|-------|------|
 | `RunStartScreen` | `start` | 새 Run 설정 폼 |
-| `RunLiveScreen` | `live` | 노드 타임라인 + dataLayer 캡처 테이블 |
+| `RunLiveScreen` | `live` | 노드 타임라인(`Timeline`) + 선택 노드별 Thought 필터 + dataLayer 테이블 |
 | `HitlScreen` | `hitl` | GTM 설계안 검토·승인 |
 | `HistoryScreen` | `history` | 실행 이력 목록 |
 | `ResourcesScreen` | `resources` | 생성된 GTM 리소스 목록 |
