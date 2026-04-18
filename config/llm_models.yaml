@@ -1,27 +1,27 @@
 # 구역(zone)별 Chat 모델 ID (OpenAI Chat Completions / LangChain ChatOpenAI).
 #
-# 공식 가이드 요약 (platform.openai.com/docs/models, reasoning 가이드):
-# - 복잡한 추론·코드·다단계 에이전트 → gpt-5.4
-# - 지연·비용을 줄이면서도 추론이 필요한 작업 → gpt-5.4-mini
-# - 분류·라우팅·단순 변환 등 고처리량·저비용 → gpt-5.4-nano
+# 비용 최적화 프로필: 스텝 상한은 exploration_limits.yaml 만 건드린다. 여기서는 모델만 낮춤.
+# - nano: 짧은 출력·분류·라우팅형 (호출당 토큰·단가 모두 유리)
+# - mini: 구조화 JSON·긴 컨텍스트·브라우저 스텝 결정 (nano 보다 안정, 플래그십보다 저렴)
 #
-# 계정에 아직 5.4 계열이 없으면 default 를 gpt-5.1 등으로 바꾸면 됩니다.
+# 품질이 부족하면 해당 구역만 mini→플래그십으로 올리면 된다.
+# 계정에 5.4 계열이 없으면 default 를 사용 가능한 모델로 통일한다.
 
-default: gpt-5.4
+default: gpt-5.4-mini
 
-# 한 스냅샷으로 PLP/PDP/cart 등 짧은 라벨 분류 → nano
+# 페이지 타입 한 단어 분류
 page_classifier: gpt-5.4-nano
 
-# HTML·JSON-LD에서 셀렉터 추출·검증 — 문서 이해·정확도
-structure_analyzer: gpt-5.4
+# DOM/JSON-LD·셀렉터 추출 (정확도 필요 → mini)
+structure_analyzer: gpt-5.4-mini
 
-# GTM Variable/Trigger/Tag 설계안 — 규칙 많은 구조화 출력
-planning: gpt-5.4
+# GTM 설계안 JSON (규칙·스키마 준수 → mini)
+planning: gpt-5.4-mini
 
-# 탐색 큐·이벤트 목표 계획 — 중간 복잡도
-journey_planner: gpt-5.4-mini
+# 탐색 큐·이벤트 분류 (상대적으로 짧은 JSON → nano)
+journey_planner: gpt-5.4-nano
 
-# 브라우저: 스텝마다 스냅샷+히스토리로 다음 액션 결정 — 에이전트에 가까운 다단계
-navigator: gpt-5.4
-cart_addition_navigator: gpt-5.4
-begin_checkout_navigator: gpt-5.4
+# Navigator: 스텝당 LLM 호출이 많음 → 전부 mini 로 통일 (스텝 수는 YAML 스텝 상한 유지)
+navigator: gpt-5.4-mini
+cart_addition_navigator: gpt-5.4-mini
+begin_checkout_navigator: gpt-5.4-mini

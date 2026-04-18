@@ -67,6 +67,8 @@ python serve_ui.py        # UI 서버 → http://localhost:8766/ui/ (`serve_ui.p
 python main.py            # CLI 직접 실행
 ```
 
+Windows에서 `python`이 PATH에 없으면 동일하게 **`py -3`** 로 실행하면 된다 (`py -3 serve_ui.py`, `py -3 main.py`, `py -3 gtm/auth.py`).
+
 Playwright 창: `serve_ui` / 노드 공통으로 `GTM_AI_HEADLESS`가 `1|true|yes`일 때만 headless. `serve_ui`는 값이 없으면 **`GTM_AI_HEADLESS=0`(headed)** 을 기본 설정한다. 상세는 `agent/nodes/CLAUDE.md`, `.env.example` 참고.
 
 ---

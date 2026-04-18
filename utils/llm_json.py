@@ -69,7 +69,7 @@ def parse_llm_json(raw: str | None, *, fallback: Any | None = None) -> Any:
     return fallback
 
 
-def make_chat_llm(model: str = "gpt-5.4", *, timeout: float = 120.0, **kwargs: Any) -> ChatOpenAI:
+def make_chat_llm(model: str = "gpt-5.4-mini", *, timeout: float = 120.0, **kwargs: Any) -> ChatOpenAI:
     """`ChatOpenAI` 인스턴스를 **호출 시점에** 만들어 반환한다.
 
     모듈 최상단에서 `_llm = ChatOpenAI(...)`로 즉시 만들면, 임포트 타이밍에

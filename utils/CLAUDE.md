@@ -24,7 +24,7 @@ LangChain LLM 응답에서 JSON을 추출하는 **모든 경로**가 이 모듈�
 from utils.llm_json import make_chat_llm, parse_llm_json
 
 # LLM 인스턴스: 모듈 최상단이 아니라 노드 함수 진입 시점에 생성
-llm = make_chat_llm(model="gpt-5.4", timeout=120.0)
+llm = make_chat_llm(model="gpt-5.4-mini", timeout=120.0)
 
 try:
     response = await llm.ainvoke(messages)

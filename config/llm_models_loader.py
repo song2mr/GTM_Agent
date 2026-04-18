@@ -14,8 +14,8 @@ import yaml
 _YAML = Path(__file__).resolve().parent / "llm_models.yaml"
 _cache: dict[str, Any] | None = None
 
-# YAML 없음/손상 시; 공식 문서 기본 권장과 동일 계열
-_FALLBACK_MODEL = "gpt-5.4"
+# YAML 없음/손상 시 — 비용 최적화 기본값(mini)
+_FALLBACK_MODEL = "gpt-5.4-mini"
 
 
 def read_llm_models() -> dict[str, Any]:
@@ -39,7 +39,7 @@ def _coerce_model(value: Any) -> str | None:
 
 
 def llm_model(zone: str) -> str:
-    """구역 키에 해당하는 모델 ID. 없거나 비어 있으면 `default` 키, 그것도 없으면 gpt-5.4."""
+    """구역 키에 해당하는 모델 ID. 없거나 비어 있으면 `default` 키, 그것도 없으면 gpt-5.4-mini."""
     data = read_llm_models()
     default_m = _coerce_model(data.get("default")) or _FALLBACK_MODEL
     if zone == "default":

@@ -62,10 +62,10 @@ YAML 파일이 없거나 키가 빠지면 위 기본값이 적용된다. 일반 
 
 에이전트·Navigator **구역(zone)별 OpenAI 채팅 모델 ID**를 지정한다.
 
-- `default` — 구역 키가 없거나 비어 있을 때 사용 (없으면 코드 기본 `gpt-5.4`)
+- `default` — 구역 키가 없거나 비어 있을 때 사용 (없으면 코드 기본 `gpt-5.4-mini`)
 - `page_classifier`, `structure_analyzer`, `planning`, `journey_planner`
 - `navigator`, `cart_addition_navigator`, `begin_checkout_navigator`
 
 로더: `config/llm_models_loader.py` — `read_llm_models`, `llm_model(zone)`, `reset_llm_models_cache` (테스트용).
 
-OpenAI 문서 기준으로 복잡도에 맞게 기본 예시가 잡혀 있다(플래그십 `gpt-5.4`, 저비용 구간에 `gpt-5.4-mini` / `gpt-5.4-nano` 등). 계정에서 사용 가능한 모델 ID로만 바꾸면 된다.
+저장소 기본 프로필은 **비용 최적화**(대부분 `gpt-5.4-mini`, 분류·큐 계획은 `gpt-5.4-nano`)이다. 품질이 부족하면 해당 구역만 플래그십으로 올리면 된다.
