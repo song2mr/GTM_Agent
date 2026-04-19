@@ -15,7 +15,12 @@ from agent.nodes.active_explorer import _build_synthetic_event, _extract_dom_dat
 from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
 from browser.cart_addition_navigator import CartAdditionNavigator
-from browser.listener import event_fingerprint, get_captured_events, inject_listener
+from browser.listener import (
+    event_fingerprint,
+    get_captured_events,
+    inject_listener,
+    snapshot_datalayer_names,
+)
 from browser.url_context import url_looks_like_cart_resume, url_looks_like_pdp
 from utils import logger
 from utils.ui_emitter import emit, update_state
@@ -79,6 +84,17 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
             await navigate(page, target_url)
             await page.wait_for_timeout(2000)
             try:
+                await logger.probe_datalayer_verbose(
+                    page,
+                    "cart_addition_explorer/initial",
+                    page.url,
+                    "",
+                    extra={"targets": targets},
+                    raw_tail_n=12,
+                )
+            except Exception as e:
+                logger.debug(f"[CartAdditionExplorer] initial DL probe 실패: {e}")
+            try:
                 last_live_url = page.url
                 if url_looks_like_pdp(last_live_url):
                     last_pdp_url = last_live_url
@@ -110,14 +126,50 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
                     continue
 
                 logger.info(f"[CartAdditionExplorer] 목표: {target_event}")
+                try:
+                    _ent = await snapshot_datalayer_names(page)
+                    logger.log_dl_state(
+                        "cart_addition_explorer/event-enter",
+                        page.url,
+                        _ent,
+                        target_event=target_event,
+                        extra={"captured_n": len(captured_events)},
+                    )
+                except Exception:
+                    pass
 
                 if target_event in click_triggers:
                     trigger_sel = click_triggers[target_event]
                     await close_popup(page)
+                    try:
+                        _pre_ct = await snapshot_datalayer_names(page)
+                        logger.log_dl_state(
+                            "cart_addition_explorer/click_trigger/pre",
+                            page.url,
+                            _pre_ct,
+                            target_event=target_event,
+                            extra={"trigger_selector": trigger_sel},
+                        )
+                    except Exception:
+                        pass
                     click_result = await click(page, trigger_sel, timeout=8000)
                     if click_result.success:
                         await page.wait_for_timeout(2000)
-                        dl_events = await get_captured_events(page)
+                        dl_events = await get_captured_events(
+                            page,
+                            log_tag=f"cart_addition_explorer/click_trigger/{target_event}",
+                        )
+                        try:
+                            _post_ct = await snapshot_datalayer_names(page)
+                            logger.log_dl_state(
+                                "cart_addition_explorer/click_trigger/post-2s",
+                                page.url,
+                                _post_ct,
+                                target_event=target_event,
+                                extra={"trigger_selector": trigger_sel},
+                            )
+                        except Exception:
+                            pass
                         seen_fps = {event_fingerprint(e) for e in captured_events}
                         dl_match = [
                             e
@@ -147,7 +199,9 @@ async def cart_addition_explorer(state: GTMAgentState) -> GTMAgentState:
 
                 if result == "captured":
                     seen_fps = {event_fingerprint(e) for e in captured_events}
-                    for e in await get_captured_events(page):
+                    for e in await get_captured_events(
+                        page, log_tag=f"cart_addition_explorer/nav-success/{target_event}"
+                    ):
                         if event_fingerprint(e) not in seen_fps:
                             captured_events.append(e)
                             seen_fps.add(event_fingerprint(e))

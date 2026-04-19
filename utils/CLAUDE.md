@@ -10,8 +10,30 @@
 |------|------|
 | `ui_emitter.py` | `logs/{run_id}/` 아래 JSONL/JSON 파일에 이벤트 기록 |
 | `token_tracker.py` | 노드별 LLM 토큰 사용량 누적 집계 |
-| `logger.py` | `logs/{run_id}/` 폴더 초기화, `run_dir()` 참조 제공 |
+| `logger.py` | `logs/{run_id}/` 초기화, `run.log` / 구조화 JSONL / `run_dir()` |
 | `llm_json.py` | LLM 응답 JSON 파싱 공통 유틸 + `ChatOpenAI` lazy 팩토리 |
+
+---
+
+## logger.py
+
+`logger.setup(run_id)` 이후 `logs/{run_id}/`에 아래가 쌓인다. **상세 DEBUG**는 `run.log` 파일 핸들러에만 전부 기록되고, 콘솔(StreamHandler)은 INFO라 `[get_captured_events]`·`[DL-Raw]` 등은 파일을 봐야 한다.
+
+| 산출물 | 용도 |
+|--------|------|
+| `run.log` | 타임스탬프 전체 로그 |
+| `llm_decisions.jsonl` | Navigator LLM 결정 요약 |
+| `events.json` | 최종 캡처 이벤트 JSON |
+| `datalayer_trace.jsonl` | `log_dl_state` — URL·`signal_names`·`noise_names`·cap/dl 길이·`raw_tail`(probe 시) |
+| `datalayer_diagnose.jsonl` | `log_datalayer_diagnose` — `diagnose_datalayer()` 요약(JSON-LD는 타입 샘플만) |
+| `datalayer_raw_tail.jsonl` | `log_dl_raw_peek` — `window.dataLayer` 꼬리 N개 원본(병리 분석) |
+| `page_state.jsonl` | `log_page_state` / `probe_datalayer_verbose` 시 URL·readyState·body 길이 등 |
+| `captured_mutations.jsonl` | 선택적 캡처 목록 변경 기록 |
+| `llm_raw.jsonl` | 선택적 LLM 원문 전체 |
+
+주요 API: `log_dl_state`, `log_datalayer_diagnose`, `log_dl_raw_peek`, `probe_datalayer_verbose` (listener의 `snapshot_datalayer_names` + `peek_datalayer_raw` + 선택적 `capture_page_state`), `log_page_state`, `log_captured_mutation`, `log_llm_raw`.
+
+`browser.listener.get_captured_events(page, log_tag="…")` — 선택적 `log_tag`가 있으면 병합/필터 개수와 이벤트명 꼬리를 DEBUG로 남긴다.
 
 ---
 

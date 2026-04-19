@@ -26,6 +26,8 @@ from browser.listener import (
     event_fingerprint,
     get_captured_events,
     get_datalayer_event_context_for_llm,
+    peek_datalayer_raw,
+    snapshot_datalayer_names,
 )
 from browser.url_context import url_looks_like_pdp
 from config.exploration_limits_loader import navigator_max_llm_steps
@@ -389,6 +391,21 @@ class LLMNavigator:
         budget_block = ("\n" + "\n".join(budget_hints) + "\n") if budget_hints else ""
 
         dl_ctx = await get_datalayer_event_context_for_llm(page)
+        try:
+            _snap_pre_llm = await snapshot_datalayer_names(page)
+            logger.log_dl_state(
+                f"navigator/{target_event}/step{step}/pre-llm",
+                page.url,
+                _snap_pre_llm,
+                target_event=target_event,
+                extra={
+                    "step": step,
+                    "dl_ctx_chars": len(dl_ctx or ""),
+                    "dl_ctx_empty": not bool((dl_ctx or "").strip()),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"[Navigator] pre-llm dataLayer 스냅샷 실패: {e}")
         dl_block = ""
         if dl_ctx:
             dl_block = (
@@ -495,12 +512,60 @@ class LLMNavigator:
 
             if action == "captured":
                 logger.info(f"[Navigator] {target_event} 이미 캡처됨")
+                _dl_snap = await snapshot_datalayer_names(page)
+                logger.log_dl_state(
+                    f"navigator/{target_event}/llm-captured",
+                    page.url,
+                    _dl_snap,
+                    target_event=target_event,
+                    extra={"step": step, "reason": (decision.get("reason", "") or "")[:200]},
+                )
                 await logger.save_screenshot(page, target_event, step, "captured")
                 _evt_summary("already_captured")
                 return "captured"
 
             if action == "impossible":
                 logger.info(f"[Navigator] {target_event} 캡처 불가: {decision.get('reason', '')[:120]}")
+                # [DL] impossible 직전 상태 + 포스트갭 재폴링(log-only)
+                _dl_pre = await snapshot_datalayer_names(page)
+                logger.log_dl_state(
+                    f"navigator/{target_event}/impossible/pre",
+                    page.url,
+                    _dl_pre,
+                    target_event=target_event,
+                    extra={"step": step, "reason": (decision.get("reason", "") or "")[:200]},
+                )
+                try:
+                    await page.wait_for_timeout(3000)
+                    _dl_post = await snapshot_datalayer_names(page)
+                    _pre_sig = set(_dl_pre.get("signal_names", []))
+                    _post_sig = set(_dl_post.get("signal_names", []))
+                    _emerged = sorted(_post_sig - _pre_sig)
+                    logger.log_dl_state(
+                        f"navigator/{target_event}/impossible/post-3s",
+                        page.url,
+                        _dl_post,
+                        target_event=target_event,
+                        extra={
+                            "step": step,
+                            "emerged_after_gap": _emerged,
+                            "target_emerged_after_gap": target_event in _emerged,
+                            "note": "log-only: capture semantics unchanged",
+                        },
+                    )
+                    try:
+                        _raw = await peek_datalayer_raw(page, 14)
+                        logger.log_dl_raw_peek(
+                            f"navigator/{target_event}/impossible/post-3s-raw",
+                            page.url,
+                            _raw,
+                            target_event=target_event,
+                            extra={"step": step},
+                        )
+                    except Exception as _re:
+                        logger.debug(f"[DL] raw peek 실패: {_re}")
+                except Exception as _e:
+                    logger.debug(f"[DL] navigator impossible post-gap 재폴링 실패: {_e}")
                 await logger.save_screenshot(page, target_event, step, "impossible")
                 _evt_summary("impossible")
                 return "manual_required"
@@ -553,7 +618,28 @@ class LLMNavigator:
                 continue
 
             await page.wait_for_timeout(2000)
-            events = await get_captured_events(page)
+            events = await get_captured_events(
+                page, log_tag=f"navigator/{target_event}/step{step}/after-wait"
+            )
+
+            # [DL] 스텝별 폴링 결과 스냅샷
+            _dl_snap = await snapshot_datalayer_names(page)
+            _other_signals = [
+                n for n in _dl_snap.get("signal_names", []) if n != target_event
+            ]
+            logger.log_dl_state(
+                f"navigator/{target_event}/step{step}/after-action",
+                page.url,
+                _dl_snap,
+                target_event=target_event,
+                extra={
+                    "step": step,
+                    "action": action,
+                    "selector": history_entry.get("selector") or history_entry.get("url") or "",
+                    "other_signals": _other_signals,
+                },
+            )
+
             seen_fps = {event_fingerprint(e) for e in captured_so_far}
             new_events = [
                 e for e in events
@@ -570,6 +656,57 @@ class LLMNavigator:
 
             self._action_history.append(history_entry)
             logger.info(f"[Navigator] {target_event} 스텝{step}: 액션 성공 but 이벤트 미발화")
+            try:
+                _raw_miss = await peek_datalayer_raw(page, 10)
+                logger.log_dl_raw_peek(
+                    f"navigator/{target_event}/step{step}/miss-raw",
+                    page.url,
+                    _raw_miss,
+                    target_event=target_event,
+                    extra={"step": step, "action": action},
+                )
+            except Exception:
+                pass
+
+        # [DL] max_steps 소진 직전 상태 + 포스트갭 재폴링(log-only)
+        _dl_pre = await snapshot_datalayer_names(page)
+        logger.log_dl_state(
+            f"navigator/{target_event}/max_steps/pre",
+            page.url,
+            _dl_pre,
+            target_event=target_event,
+            extra={"step": MAX_STEPS},
+        )
+        try:
+            await page.wait_for_timeout(3000)
+            _dl_post = await snapshot_datalayer_names(page)
+            _pre_sig = set(_dl_pre.get("signal_names", []))
+            _post_sig = set(_dl_post.get("signal_names", []))
+            _emerged = sorted(_post_sig - _pre_sig)
+            logger.log_dl_state(
+                f"navigator/{target_event}/max_steps/post-3s",
+                page.url,
+                _dl_post,
+                target_event=target_event,
+                extra={
+                    "emerged_after_gap": _emerged,
+                    "target_emerged_after_gap": target_event in _emerged,
+                    "note": "log-only: capture semantics unchanged",
+                },
+            )
+            try:
+                _raw_ms = await peek_datalayer_raw(page, 14)
+                logger.log_dl_raw_peek(
+                    f"navigator/{target_event}/max_steps/post-3s-raw",
+                    page.url,
+                    _raw_ms,
+                    target_event=target_event,
+                    extra={"step": MAX_STEPS},
+                )
+            except Exception as _re:
+                logger.debug(f"[DL] max_steps raw peek 실패: {_re}")
+        except Exception as _e:
+            logger.debug(f"[DL] navigator max_steps post-gap 재폴링 실패: {_e}")
 
         logger.info(f"[Navigator] {target_event} {MAX_STEPS}스텝 소진 → Manual 이관")
         _evt_summary("max_steps_exhausted")

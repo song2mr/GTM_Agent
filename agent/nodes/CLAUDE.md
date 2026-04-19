@@ -56,11 +56,17 @@ Node 1~8 각각의 역할, 입출력, 핵심 로직, 주의사항.
 
 **역할**: 탐색 이벤트 큐 생성 + auto_capturable / manual_required 분류
 
-**입력**: `user_request`, `page_type`, `datalayer_status`
+**입력**: `selected_events`(권장) · `user_request` · `page_type` · `datalayer_status`
 **출력**: `exploration_queue`, `auto_capturable`, `cart_addition_events`, `begin_checkout_events`, `manual_required`
 
+**이벤트 스코프 결정 (단일 진입점 `agent/request_events.resolve_selected_events`)**
+1. `state["selected_events"]`가 있으면 **이 목록만** 큐에 넣는다(UI 체크박스 경로, strict).
+2. 없으면 `user_request`의 마지막 `( … )` 괄호 목록을 파싱(CLI/레거시 호환).
+3. 둘 다 없으면 LLM에게 자유 텍스트를 넘겨 큐를 제안받되, 시스템 프롬프트가 **표준 퍼널 자동 확장을 금지**한다(`_PLANNER_SYSTEM`).
+4. 어느 경로든 `_EXPLORATION_RANK`는 **정렬용**이지 큐에 항목을 추가하는 근거가 아니다.
+
 - `cart_addition_events` / `begin_checkout_events`: LLM이 JSON으로 지정(이름은 `exploration_queue`와 동일). 필드 누락 시 `agent/commerce_events.py`의 `fallback_cart_addition_events` / `fallback_begin_checkout_events`로 GA4 기본명만 폴백.
-- **`exploration_queue` 정규화**: `_normalize_and_sort_exploration_queue`가 중복 제거·`_EXPLORATION_RANK` 기준 stable sort를 수행한다. **`purchase`·`refund`는 `EXCLUDE_FROM_EXPLORATION_QUEUE`로 큐에서 제거**되고 `exploration_log`에 사유가 붙는다. 사용자 요청 문자열에 해당 단어가 있으면 `manual_required`에만 추가된다(자동 탐색 대상 아님).
+- **`exploration_queue` 정규화**: `_normalize_and_sort_exploration_queue`가 중복 제거·`_EXPLORATION_RANK` 기준 stable sort를 수행한다. **`purchase`·`refund`는 `EXCLUDE_FROM_EXPLORATION_QUEUE`로 큐에서 제거**되고 `exploration_log`에 사유가 붙는다. 요청/선택에 `purchase`·`refund`가 있으면 `manual_required`에만 추가된다(자동 탐색 대상 아님).
 
 **분류 기준**
 ```python
@@ -69,9 +75,7 @@ EXCLUDE_FROM_EXPLORATION_QUEUE = frozenset({"purchase", "refund"})
 # 그 외 큐에 남은 이벤트 → auto_capturable
 ```
 
-**LLM 호출·파싱**: `utils.llm_json.make_chat_llm`으로 lazy 생성한 LLM을 `try/except`로 감싸 호출한다. 네트워크·API 키·rate limit·타임아웃 어떤 실패도 파이프라인을 죽이지 않고 `_default_queue(page_type, user_request)` 폴백으로 Node 3로 넘어간다. JSON 파싱은 `parse_llm_json`만 사용한다.
-
-**기본 큐 폴백**: `add_to_wishlist` 등 user_request에 명시된 커스텀 이벤트도 큐에 자동 포함된다.
+**LLM 호출·파싱**: `selected_events`/괄호 목록이 있으면 **LLM 호출 자체를 스킵**하고 목록을 그대로 정규화·정렬만 한다. 폴백 경로에서만 `utils.llm_json.make_chat_llm`으로 lazy 생성한 LLM을 `try/except`로 호출하고, 실패 시 `_default_queue(page_type, user_request)`로 Node 3에 진행한다. JSON 파싱은 `parse_llm_json`만 사용한다.
 
 ---
 
@@ -98,14 +102,14 @@ DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(C
 - `MAX_STEPS=6` 멀티스텝 탐색. 재시도가 아닌 스텝 진행 개념
 - 이벤트별 **implicit**(view_item_list·view_cart) / **interaction**(add_to_cart 등) / **hybrid** — `navigator.py`에서 시스템·사용자 메시지로 분리해 LLM이 전략을 섞지 않게 함
 - `LLMNavigator._action_history`에 세션 전체 액션 누적 — 이벤트 간 리셋 없음; 히스토리 텍스트에는 `scroll`의 **direction**, `navigate`의 **url**, `click`의 **단일 셀렉터**(쉼표 나열 시 첫 항만 실행)가 반영됨
-- interaction·PDP URL이면 스냅샷 전 짧은 스크롤 + `get_page_snapshot(..., prefer_bottom=True)` 로 본문 가시성 보강
+- interaction·PDP URL이면 스냅샷 전 짧은 스크롤 + `get_page_snapshot(..., prefer_bottom=True)` 로 본문 가시성 보강 (**hybrid `view_item`은 홈에서 위와 달리 앞부분만 잘릴 수 있음** — `browser/CLAUDE.md` 참고)
 - LLM이 히스토리를 보고 "현재 어느 단계인지" 스스로 판단해 다음 액션 결정
 - `EVENT_CAPTURE_GUIDE`는 "어떤 조건이 충족되어야 발화되는가" 목표 중심으로 서술
 - 클릭 실패·타임아웃은 `ActionResult.success=False`로 처리, 예외 미발생
 
 **브라우저**: `GTM_AI_HEADLESS=1|true|yes`이면 headless. 그 외(미설정 포함)는 headed — `serve_ui.py`는 `.env`에 값이 없을 때 **`0`을 기본 주입**한다. 숨김만 쓰려면 `.env`에 `GTM_AI_HEADLESS=1`.
 
-**로그(멈춤 추적)**: `run.log`에 `[ActiveExplorer] Playwright headless=…`, Navigator 루프의 `[Navigator] run_for_event …` / `decide_next_action …` / `LLM ainvoke …` / `액션 실행 끝 …` 및 `browser/actions.get_page_snapshot`의 `[Snapshot] page.content() …`·`완료`·`타임아웃`이 순서대로 찍힌다(스냅샷은 `page.content()` 30초 상한).
+**로그(멈춤·dataLayer 추적)**: `run.log`에 위 항목 + `[DL]`·`[DL-Diag]`·`[get_captured_events]`(파일 DEBUG) 등. 구조화 분석은 `logs/{run_id}/datalayer_trace.jsonl`, `datalayer_diagnose.jsonl`, `datalayer_raw_tail.jsonl`, `page_state.jsonl` — `utils/logger.py`·`browser/CLAUDE.md` 참고. PDP에서 `view_item`만 단독 확인할 때는 `scripts/check_pdp_view_item.py`.
 
 **UI 동기화**: `manual_required`가 비어 있고 **`cart_addition_events`·`begin_checkout_events`도 비어 있을 때만** Node 3 종료 시 `manual_capture`를 `skip`한다(뒤에 전용 탐색 노드가 올 수 있음).
 
@@ -191,7 +195,7 @@ LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
 
 **실행 순서 엄수**: Variable → Trigger → Tag (의존 관계)
 **이름 충돌**: `create_or_update_*` 메서드로 덮어쓰기
-**DOM 변수 (`type: "d"`)**: `_build_variable`에서 `gtm.dom_variable.normalize_dom_element_parameters`로 `parameter[]`를 GTM REST 키(`selectionMethod`, `elementSelector`/`elementId`, `attributeName`)에 맞춘다. 상세·공식 링크는 `docs/gtm-variable-api.md`.
+**DOM 변수 (`type: "d"`)**: 공식 API는 `elementId` + `attributeName`(HTML id 기반)만 지원. `_build_variable`이 `gtm.dom_variable.normalize_dom_element_parameters`로 정규화하며, **CSS selector가 필요한 케이스는 자동으로 `type: "jsm"` Custom JavaScript 변수로 변환**된다(이름 유지). 집계 CJS가 동일 selector를 중복하지 않도록 `{{DOM - X}}` 참조 스타일을 **프롬프트(`planning.py`)에서 유도**한다(자동 치환 안전망은 기존 LLM 패턴을 깨뜨릴 수 있어 미도입). 상세·근거는 `docs/gtm-variable-api.md`.
 **Rate Limit(429)**: 최대 3회 재시도(30/60/90초), 실패 시 기존 `gtm-ai-*` workspace 재사용
 
 **Workspace 상한 HITL**:

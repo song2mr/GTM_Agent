@@ -21,7 +21,7 @@ import time
 from agent.state import GTMAgentState
 from browser.actions import get_page_snapshot, navigate
 from config.llm_models_loader import llm_model
-from browser.listener import inject_listener
+from browser.listener import diagnose_datalayer, inject_listener
 from utils import logger, token_tracker
 from utils.llm_json import make_chat_llm, parse_llm_json
 from utils.ui_emitter import emit, update_state
@@ -159,6 +159,25 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
             await inject_listener(page)
             await navigate(page, target_url)
             await page.wait_for_timeout(2000)
+
+            try:
+                _dl_diag = await diagnose_datalayer(page)
+                logger.log_datalayer_diagnose(
+                    "structure_analyzer/post-load",
+                    page.url,
+                    _dl_diag,
+                    extra={"page_type": page_type},
+                )
+                await logger.probe_datalayer_verbose(
+                    page,
+                    "structure_analyzer/post-load",
+                    page.url,
+                    "",
+                    extra={"page_type": page_type},
+                    raw_tail_n=12,
+                )
+            except Exception as e:
+                logger.debug(f"[StructureAnalyzer] dataLayer 진단 로그 실패(무시): {e}")
             
             # Phase 1: JSON-LD 분석 (있으면 우선)
             if json_ld_raw:

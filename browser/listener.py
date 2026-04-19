@@ -160,12 +160,142 @@ async def inject_listener(page: Page) -> None:
     await page.add_init_script(_LISTENER_SCRIPT)
 
 
-async def get_captured_events(page: Page) -> list[dict]:
-    """push로 쌓인 __gtm_captured와, 현재 window.dataLayer 배열을 합친 목록을 반환합니다."""
+async def get_captured_events(page: Page, log_tag: str | None = None) -> list[dict]:
+    """push로 쌓인 __gtm_captured와, 현재 window.dataLayer 배열을 합친 목록을 반환합니다.
+
+    log_tag가 있으면 병합·노이즈 필터 전후 개수와 이벤트명 꼬리를 DEBUG로 남긴다.
+    """
     events = await page.evaluate(_MERGE_CAPTURED_AND_ARRAY_SCRIPT)
     if not isinstance(events, list):
-        return []
-    return filter_signal_datalayer_events(events)
+        events = []
+    merged_n = len(events)
+    filtered = filter_signal_datalayer_events(events)
+    if log_tag:
+        try:
+            from utils import logger as _log
+
+            names: list[str] = []
+            for e in filtered:
+                d = e.get("data") if isinstance(e, dict) else None
+                if isinstance(d, dict):
+                    evn = d.get("event")
+                    if isinstance(evn, str):
+                        names.append(evn)
+            _log.debug(
+                f"[get_captured_events] tag={log_tag!r} merged_n={merged_n} "
+                f"filtered_n={len(filtered)} events_tail={names[-25:]!r}"
+            )
+        except Exception:
+            pass
+    return filtered
+
+
+_DL_SNAPSHOT_SCRIPT = """
+() => {
+    const cap = Array.isArray(window.__gtm_captured) ? window.__gtm_captured : [];
+    const dl  = Array.isArray(window.dataLayer) ? window.dataLayer : null;
+    const names = [];
+    const seen = new Set();
+    function add(name) {
+        if (typeof name !== 'string' || !name) return;
+        if (seen.has(name)) return;
+        seen.add(name);
+        names.push(name);
+    }
+    for (let i = 0; i < cap.length; i++) {
+        const d = cap[i] && cap[i].data;
+        if (d && typeof d === 'object') add(d.event);
+    }
+    if (dl) {
+        for (let j = 0; j < dl.length; j++) {
+            const it = dl[j];
+            if (it && typeof it === 'object') add(it.event);
+        }
+    }
+    return {
+        cap_n: cap.length,
+        dl_n: dl ? dl.length : -1,
+        has_dl: dl !== null,
+        has_gtm: Boolean(window.google_tag_manager),
+        listener_injected: Boolean(window.__gtm_listener_injected),
+        names: names,
+    };
+}
+"""
+
+
+_DL_PEEK_RAW_SCRIPT = """
+(n) => {
+    const dl = Array.isArray(window.dataLayer) ? window.dataLayer : [];
+    const take = Math.max(1, Math.min(n || 8, 40));
+    const tail = dl.slice(Math.max(0, dl.length - take));
+    const out = [];
+    for (let i = 0; i < tail.length; i++) {
+        try {
+            out.push(JSON.parse(JSON.stringify(tail[i])));
+        } catch (e) {
+            try { out.push({ __peek_error: String(e), keys: Object.keys(tail[i] || {}) }); } catch (_) {}
+        }
+    }
+    return out;
+}
+"""
+
+
+async def peek_datalayer_raw(page: Page, last_n: int = 8) -> list:
+    """window.dataLayer 배열 꼬리 N개 원본 payload (JSON 직렬화 가능 형태).
+
+    snapshot_datalayer_names가 'event' 문자열만 건네는 것과 달리,
+    여기선 payload 전체를 돌려줘 "이름은 맞는데 구조가 달라 필터에 걸림" 같은
+    병리적 케이스를 사후에 확인할 수 있게 한다.
+    """
+    try:
+        items = await page.evaluate(_DL_PEEK_RAW_SCRIPT, last_n)
+    except Exception as e:
+        return [{"__peek_error": str(e)[:200]}]
+    return items if isinstance(items, list) else []
+
+
+async def snapshot_datalayer_names(page: Page) -> dict:
+    """현재 __gtm_captured + window.dataLayer의 event 이름 목록을 요약합니다.
+
+    로그/진단 전용. get_captured_events와 달리 dedupe만 event명 기준으로 하고
+    원본 payload는 돌려주지 않아 직렬화가 싸다.
+
+    Returns:
+        {
+            "cap_n": int,                    # __gtm_captured 길이
+            "dl_n": int,                     # window.dataLayer 길이 (-1이면 배열 아님)
+            "has_dl": bool,
+            "has_gtm": bool,
+            "listener_injected": bool,
+            "names": [event명...],           # 중복 제거 + 등장 순서 (cap → dl)
+            "signal_names": [...],           # 노이즈 제거 결과
+            "noise_names": [...],            # denylist에 걸린 이름들
+            "signal_n": int,
+            "noise_n": int,
+        }
+    """
+    try:
+        snap = await page.evaluate(_DL_SNAPSHOT_SCRIPT)
+    except Exception as e:
+        return {
+            "error": str(e)[:200],
+            "cap_n": 0, "dl_n": -1, "has_dl": False, "has_gtm": False,
+            "listener_injected": False,
+            "names": [], "signal_names": [], "noise_names": [],
+            "signal_n": 0, "noise_n": 0,
+        }
+    if not isinstance(snap, dict):
+        snap = {}
+    raw_names = snap.get("names") or []
+    signal = [n for n in raw_names if not is_datalayer_noise_event_name(n)]
+    noise = [n for n in raw_names if is_datalayer_noise_event_name(n)]
+    snap["signal_names"] = signal
+    snap["noise_names"] = noise
+    snap["signal_n"] = len(signal)
+    snap["noise_n"] = len(noise)
+    return snap
 
 
 _DATALAYER_EVENT_ROWS_FOR_LLM_SCRIPT = f"""

@@ -15,7 +15,7 @@ from agent.nodes.active_explorer import _build_synthetic_event, _extract_dom_dat
 from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
 from browser.begin_checkout_navigator import BeginCheckoutNavigator
-from browser.listener import get_captured_events, inject_listener
+from browser.listener import get_captured_events, inject_listener, snapshot_datalayer_names
 from utils import logger
 from utils.ui_emitter import emit, update_state
 
@@ -66,6 +66,17 @@ async def begin_checkout_explorer(state: GTMAgentState) -> GTMAgentState:
             await inject_listener(page)
             await navigate(page, target_url)
             await page.wait_for_timeout(2000)
+            try:
+                await logger.probe_datalayer_verbose(
+                    page,
+                    "begin_checkout_explorer/initial",
+                    page.url,
+                    "",
+                    extra={"targets": targets},
+                    raw_tail_n=12,
+                )
+            except Exception as e:
+                logger.debug(f"[BeginCheckoutExplorer] initial DL probe 실패: {e}")
 
             for target_event in targets:
                 already = any(
@@ -87,14 +98,50 @@ async def begin_checkout_explorer(state: GTMAgentState) -> GTMAgentState:
                     continue
 
                 logger.info(f"[BeginCheckoutExplorer] 목표: {target_event}")
+                try:
+                    _ent = await snapshot_datalayer_names(page)
+                    logger.log_dl_state(
+                        "begin_checkout_explorer/event-enter",
+                        page.url,
+                        _ent,
+                        target_event=target_event,
+                        extra={"captured_n": len(captured_events)},
+                    )
+                except Exception:
+                    pass
 
                 if target_event in click_triggers:
                     trigger_sel = click_triggers[target_event]
                     await close_popup(page)
+                    try:
+                        _pre_ct = await snapshot_datalayer_names(page)
+                        logger.log_dl_state(
+                            "begin_checkout_explorer/click_trigger/pre",
+                            page.url,
+                            _pre_ct,
+                            target_event=target_event,
+                            extra={"trigger_selector": trigger_sel},
+                        )
+                    except Exception:
+                        pass
                     click_result = await click(page, trigger_sel, timeout=8000)
                     if click_result.success:
                         await page.wait_for_timeout(2000)
-                        dl_events = await get_captured_events(page)
+                        dl_events = await get_captured_events(
+                            page,
+                            log_tag=f"begin_checkout_explorer/click_trigger/{target_event}",
+                        )
+                        try:
+                            _post_ct = await snapshot_datalayer_names(page)
+                            logger.log_dl_state(
+                                "begin_checkout_explorer/click_trigger/post-2s",
+                                page.url,
+                                _post_ct,
+                                target_event=target_event,
+                                extra={"trigger_selector": trigger_sel},
+                            )
+                        except Exception:
+                            pass
                         dl_match = [
                             e
                             for e in dl_events
@@ -122,7 +169,9 @@ async def begin_checkout_explorer(state: GTMAgentState) -> GTMAgentState:
                 result = await nav.run_for_event(page, target_event, captured_events)
 
                 if result == "captured":
-                    for e in await get_captured_events(page):
+                    for e in await get_captured_events(
+                        page, log_tag=f"begin_checkout_explorer/nav-success/{target_event}"
+                    ):
                         if e not in captured_events:
                             captured_events.append(e)
                     exploration_log.append(

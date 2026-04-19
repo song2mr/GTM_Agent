@@ -18,7 +18,12 @@ import time
 
 from agent.state import GTMAgentState
 from browser.actions import click, close_popup, navigate
-from browser.listener import get_captured_events, inject_listener
+from browser.listener import (
+    get_captured_events,
+    inject_listener,
+    peek_datalayer_raw,
+    snapshot_datalayer_names,
+)
 from browser.navigator import LLMNavigator
 from browser.url_context import url_looks_like_pdp
 from utils import logger
@@ -146,10 +151,23 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
             await page.wait_for_timeout(2000)
             
             # 로드 직후 이벤트 수집 (page_view 포함)
-            initial_events = await get_captured_events(page)
+            initial_events = await get_captured_events(
+                page, log_tag="active_explorer/initial"
+            )
             for e in initial_events:
                 if e not in captured_events:
                     captured_events.append(e)
+
+            _dl_snap = await snapshot_datalayer_names(page)
+            logger.log_dl_state(
+                "active_explorer/initial",
+                page.url,
+                _dl_snap,
+                extra={
+                    "initial_events_n": len(initial_events),
+                    "auto_capturable": auto_capturable,
+                },
+            )
 
             try:
                 live_page_url = page.url
@@ -200,6 +218,15 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                     )
                     continue
 
+                _pre_snap = await snapshot_datalayer_names(page)
+                logger.log_dl_state(
+                    "active_explorer/event-enter",
+                    page.url,
+                    _pre_snap,
+                    target_event=target_event,
+                    extra={"captured_n": len(captured_events)},
+                )
+
                 already_captured = any(
                     e.get("data", {}).get("event") == target_event
                     for e in captured_events
@@ -229,12 +256,54 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                     await close_popup(page)
             
                     dom_data_before = await _extract_dom_data(page, dom_selectors)
+
+                    _click_pre_snap = await snapshot_datalayer_names(page)
+                    logger.log_dl_state(
+                        "active_explorer/click_trigger/pre",
+                        page.url,
+                        _click_pre_snap,
+                        target_event=target_event,
+                        extra={"trigger_selector": trigger_sel},
+                    )
+
                     click_result = await click(page, trigger_sel)
             
                     if click_result.success:
                         await page.wait_for_timeout(2000)
                         # 우선순위 1a: 클릭 후 dataLayer 이벤트 발화 여부 확인
-                        dl_events = await get_captured_events(page)
+                        dl_events = await get_captured_events(
+                            page,
+                            log_tag=f"active_explorer/click_trigger/{target_event}/post-2s",
+                        )
+
+                        _click_post_snap = await snapshot_datalayer_names(page)
+                        _pre_signal = set(_click_pre_snap.get("signal_names", []))
+                        _post_signal = set(_click_post_snap.get("signal_names", []))
+                        _new_signal = sorted(_post_signal - _pre_signal)
+                        logger.log_dl_state(
+                            "active_explorer/click_trigger/post-2s",
+                            page.url,
+                            _click_post_snap,
+                            target_event=target_event,
+                            extra={
+                                "trigger_selector": trigger_sel,
+                                "new_signal_since_click": _new_signal,
+                                "target_fired_within_2s": target_event in _new_signal,
+                            },
+                        )
+                        if target_event not in _new_signal:
+                            try:
+                                _raw_ct = await peek_datalayer_raw(page, 12)
+                                logger.log_dl_raw_peek(
+                                    "active_explorer/click_trigger/post-2s-raw",
+                                    page.url,
+                                    _raw_ct,
+                                    target_event=target_event,
+                                    extra={"trigger_selector": trigger_sel},
+                                )
+                            except Exception:
+                                pass
+
                         dl_match = [
                             e for e in dl_events
                             if e not in captured_events
@@ -296,10 +365,41 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                     continue
             
                 # ── 우선순위 2: LLM Navigator 루프 (dataLayer 기반) ──
+                _nav_pre_snap = await snapshot_datalayer_names(page)
+                logger.log_dl_state(
+                    "active_explorer/navigator/pre",
+                    page.url,
+                    _nav_pre_snap,
+                    target_event=target_event,
+                )
+
                 result = await navigator.run_for_event(page, target_event, captured_events)
-            
+
+                _nav_post_snap = await snapshot_datalayer_names(page)
+                logger.log_dl_state(
+                    "active_explorer/navigator/post",
+                    page.url,
+                    _nav_post_snap,
+                    target_event=target_event,
+                    extra={"navigator_result": result},
+                )
+                if result != "captured":
+                    try:
+                        _rf = await peek_datalayer_raw(page, 14)
+                        logger.log_dl_raw_peek(
+                            f"active_explorer/navigator/fail/{target_event}",
+                            page.url,
+                            _rf,
+                            target_event=target_event,
+                            extra={"navigator_result": result},
+                        )
+                    except Exception:
+                        pass
+
                 if result == "captured":
-                    all_events = await get_captured_events(page)
+                    all_events = await get_captured_events(
+                        page, log_tag=f"active_explorer/navigator-success/{target_event}"
+                    )
                     for e in all_events:
                         if e not in captured_events:
                             captured_events.append(e)

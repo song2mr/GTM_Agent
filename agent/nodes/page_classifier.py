@@ -67,7 +67,9 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
             await page.wait_for_timeout(2000)  # SPA 이벤트 대기
 
             # 로드타임 이벤트 수집
-            load_events = await get_captured_events(page)
+            load_events = await get_captured_events(
+                page, log_tag="page_classifier/post-load"
+            )
 
             # dataLayer 상태 진단
             dl_diagnosis = await diagnose_datalayer(page)
@@ -78,6 +80,28 @@ async def page_classifier(state: GTMAgentState) -> GTMAgentState:
                 f"[PageClassifier] dataLayer 상태: {datalayer_status}, "
                 f"이벤트: {datalayer_events_found}, "
                 f"JSON-LD: {len(json_ld_data)}개"
+            )
+            logger.info(
+                f"[PageClassifier] diagnose_datalayer url={target_url!r} "
+                f"status={datalayer_status!r} has_datalayer={dl_diagnosis.get('has_datalayer')} "
+                f"has_gtm={dl_diagnosis.get('has_gtm')} has_ecommerce={dl_diagnosis.get('has_ecommerce')} "
+                f"ecommerce_fields={dl_diagnosis.get('ecommerce_fields')} "
+                f"events={datalayer_events_found} json_ld_n={len(json_ld_data)} "
+                f"load_events_n={len(load_events)}"
+            )
+            logger.log_datalayer_diagnose(
+                "page_classifier/post-load",
+                target_url,
+                dl_diagnosis,
+                extra={"load_events_n": len(load_events)},
+            )
+            await logger.probe_datalayer_verbose(
+                page,
+                "page_classifier/post-load",
+                target_url,
+                "",
+                extra={"status": datalayer_status, "load_events_n": len(load_events)},
+                raw_tail_n=12,
             )
 
             # 페이지 타입 판단

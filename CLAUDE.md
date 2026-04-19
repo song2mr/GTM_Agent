@@ -7,8 +7,11 @@
 
 ## 프로젝트 한 줄 요약
 
-자연어 요청 → AI가 대상 페이지를 탐색해 dataLayer 이벤트를 캡처하고,
+사용자가 UI 체크박스로 **설치할 GA4 이벤트**를 고르면 → AI가 대상 페이지를 탐색해 dataLayer 이벤트를 캡처하고,
 GTM Variable / Trigger / Tag를 자동 생성 후 Publish하는 LangGraph 멀티에이전트 시스템.
+
+> 이벤트 스코프는 UI(`EventPicker`) → `selected_events` → `agent/request_events.resolve_selected_events()`가 단일 근거로 결정한다.
+> `user_request` 문자열은 자유 텍스트 **메모**이며 설치 대상을 직접 결정하지 않는다(CLI/레거시는 `( … )` 괄호 파서로 폴백).
 
 ---
 
@@ -68,6 +71,8 @@ python main.py            # CLI 직접 실행
 ```
 
 Windows에서 `python`이 PATH에 없으면 동일하게 **`py -3`** 로 실행하면 된다 (`py -3 serve_ui.py`, `py -3 main.py`, `py -3 gtm/auth.py`).
+
+**진단**: PDP에서 dataLayer `view_item` 재현만 볼 때 `py -3 scripts/check_pdp_view_item.py` (옵션 `--headed`). 상세 로그 산출물은 `utils/CLAUDE.md`의 `logger.py` 절 참고.
 
 Playwright 창: `serve_ui` / 노드 공통으로 `GTM_AI_HEADLESS`가 `1|true|yes`일 때만 headless. `serve_ui`는 값이 없으면 **`GTM_AI_HEADLESS=0`(headed)** 을 기본 설정한다. 상세는 `agent/nodes/CLAUDE.md`, `.env.example` 참고.
 

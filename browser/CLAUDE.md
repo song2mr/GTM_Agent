@@ -72,8 +72,10 @@ Navigator의 “이벤트 발화 여부” 판단은 이 병합 결과를 기준
 
 ```python
 inject_listener(page)                         # listener 주입
-get_captured_events(page) -> list             # 병합 후 denylist로 노이즈 제거
+get_captured_events(page, log_tag=None) -> list   # 병합 후 denylist; log_tag 있으면 DEBUG 요약
 get_datalayer_event_context_for_llm(page) -> str  # event 문자열 + 비노이즈만 JSON 요약
+snapshot_datalayer_names(page) -> dict       # 시그널/노이즈 이름·cap/dl 메타 (진단·로그용)
+peek_datalayer_raw(page, last_n=8) -> list   # dataLayer 배열 꼬리 원본 payload
 is_datalayer_noise_event_name(name) -> bool   # gtm.* / ajax* / 경로형 등
 filter_signal_datalayer_events(events) -> list
 event_fingerprint(ev) -> tuple                # (timestamp, event명, url) — 중복 판정 키
@@ -105,7 +107,15 @@ Navigator / Explorer에서 `captured_so_far`에 대한 `in` 비교는 금지.
 
 `ChatOpenAI(..., timeout=...)` 로 LLM 호출 상한을 두고, 호출 직전 `emit("thought", …)` 로 UI에 진행 중임을 알린다.
 
-**관측 로그(`run.log`)**: `decide_next_action`마다 URL·스텝·스냅샷 길이·비정상 스냅샷(타임아웃 문자열 등), LLM `ainvoke` 전후 경과 시간, 파싱된 `action`, `_execute_action` 성공 여부를 `logger.info`로 남긴다.
+**관측 로그(`run.log`)**: `decide_next_action`마다 URL·스텝·스냅샷 길이·비정상 스냅샷(타임아웃 문자열 등), LLM `ainvoke` 전후 경과 시간, 파싱된 `action`, `_execute_action` 성공 여부를 `logger.info`로 남긴다. dataLayer 쪽은 `[DL]` / `[DL-Diag]` / `[DL-Raw]` 및 `get_captured_events` DEBUG가 추가된다 — **전체는 `utils/logger.py`의 JSONL**(`datalayer_trace.jsonl` 등) 참고.
+
+### `view_item`(hybrid) — 스냅샷·조기 `impossible` 주의
+
+- `view_item`은 `_strategy_kind`상 **hybrid** → `decide_next_action`에서 `prefer_bottom=False`, HTML은 **`get_page_snapshot`의 앞쪽 `max_chars`(기본 18000)만** LLM에 들어간다. **긴 메인 페이지**에서는 상단 배너/내비만 보이고 **상품 그리드가 스냅샷에 안 들어올 수 있다**. `page.content()`는 뷰포트 스크롤과 무관하므로 **scroll만으로는 잘린 문자열이 바뀌지 않는다**.
+- 그 상태에서 LLM이 **`navigate`/`click` 없이 `scroll` 후 `impossible`**을 내면, **PDP에 가 보지 않고** 종료할 수 있다(실행기는 `impossible` 전 PDP 강제 가드가 없음).
+- **개선 아이디어**(택): `view_item`+비PDP일 때 `prefer_bottom=True` 또는 스냅샷 상향; Structure Analyzer의 검증된 카테고리/PLP로 **선행 `navigate`/`click` 1회**; `ViewItemNavigator` 전용 프롬프트(cart 전용과 유사); 비PDP에서 **`impossible` 거부** 휴리스틱.
+
+**수동 검증 스크립트**: `scripts/check_pdp_view_item.py` — 알려진 PDP URL로 `inject_listener` 후 `view_item` 관측(로컬 재현용).
 
 ### 스텝 정책
 

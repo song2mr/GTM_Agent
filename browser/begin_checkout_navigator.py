@@ -27,6 +27,8 @@ from browser.listener import (
     event_fingerprint,
     get_captured_events,
     get_datalayer_event_context_for_llm,
+    peek_datalayer_raw,
+    snapshot_datalayer_names,
 )
 from config.exploration_limits_loader import begin_checkout_max_llm_steps
 from config.llm_models_loader import llm_model
@@ -170,6 +172,21 @@ class BeginCheckoutNavigator:
         budget_block = f"\n{h_hint}\n" if h_hint else ""
 
         dl_ctx = await get_datalayer_event_context_for_llm(page)
+        try:
+            _pre = await snapshot_datalayer_names(page)
+            logger.log_dl_state(
+                f"checkout_nav/{target_event}/step{step}/pre-llm",
+                page.url,
+                _pre,
+                target_event=target_event,
+                extra={
+                    "step": step,
+                    "dl_ctx_chars": len(dl_ctx or ""),
+                    "dl_ctx_empty": not bool((dl_ctx or "").strip()),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"[CheckoutNavigator] pre-llm DL 스냅샷 실패: {e}")
         dl_block = ""
         if dl_ctx:
             dl_block = (
@@ -261,11 +278,58 @@ class BeginCheckoutNavigator:
             action = decision.get("action", "impossible")
 
             if action == "captured":
+                try:
+                    _s = await snapshot_datalayer_names(page)
+                    logger.log_dl_state(
+                        f"checkout_nav/{target_event}/llm-captured",
+                        page.url,
+                        _s,
+                        target_event=target_event,
+                        extra={"step": step},
+                    )
+                except Exception:
+                    pass
                 await logger.save_screenshot(page, target_event, step, "captured")
                 _evt_summary("already_captured")
                 return "captured"
 
             if action == "impossible":
+                try:
+                    _dl_pre = await snapshot_datalayer_names(page)
+                    logger.log_dl_state(
+                        f"checkout_nav/{target_event}/impossible/pre",
+                        page.url,
+                        _dl_pre,
+                        target_event=target_event,
+                        extra={"step": step, "reason": (decision.get("reason", "") or "")[:200]},
+                    )
+                    await page.wait_for_timeout(3000)
+                    _dl_post = await snapshot_datalayer_names(page)
+                    _pre_sig = set(_dl_pre.get("signal_names", []))
+                    _post_sig = set(_dl_post.get("signal_names", []))
+                    _emerged = sorted(_post_sig - _pre_sig)
+                    logger.log_dl_state(
+                        f"checkout_nav/{target_event}/impossible/post-3s",
+                        page.url,
+                        _dl_post,
+                        target_event=target_event,
+                        extra={
+                            "step": step,
+                            "emerged_after_gap": _emerged,
+                            "target_emerged_after_gap": target_event in _emerged,
+                            "note": "log-only",
+                        },
+                    )
+                    _raw = await peek_datalayer_raw(page, 12)
+                    logger.log_dl_raw_peek(
+                        f"checkout_nav/{target_event}/impossible/post-3s-raw",
+                        page.url,
+                        _raw,
+                        target_event=target_event,
+                        extra={"step": step},
+                    )
+                except Exception as _e:
+                    logger.debug(f"[CheckoutNavigator] impossible DL 로그 실패: {_e}")
                 await logger.save_screenshot(page, target_event, step, "impossible")
                 _evt_summary("impossible")
                 return "manual_required"
@@ -300,7 +364,9 @@ class BeginCheckoutNavigator:
                 continue
 
             await page.wait_for_timeout(2000)
-            events = await get_captured_events(page)
+            events = await get_captured_events(
+                page, log_tag=f"checkout_nav/{target_event}/step{step}/after-wait"
+            )
             seen_fps = {event_fingerprint(e) for e in captured_so_far}
             new_events = [
                 e
@@ -308,6 +374,21 @@ class BeginCheckoutNavigator:
                 if event_fingerprint(e) not in seen_fps
                 and e.get("data", {}).get("event") == target_event
             ]
+            try:
+                _snap = await snapshot_datalayer_names(page)
+                logger.log_dl_state(
+                    f"checkout_nav/{target_event}/step{step}/after-action",
+                    page.url,
+                    _snap,
+                    target_event=target_event,
+                    extra={
+                        "step": step,
+                        "action": action,
+                        "new_events_n": len(new_events),
+                    },
+                )
+            except Exception:
+                pass
             if new_events:
                 history_entry["event_fired"] = True
                 self._action_history.append(history_entry)
@@ -319,6 +400,53 @@ class BeginCheckoutNavigator:
             logger.info(
                 f"[CheckoutNavigator] {target_event} 스텝{step}: 액션 성공 but 이벤트 미발화"
             )
+            try:
+                _raw_m = await peek_datalayer_raw(page, 10)
+                logger.log_dl_raw_peek(
+                    f"checkout_nav/{target_event}/step{step}/miss-raw",
+                    page.url,
+                    _raw_m,
+                    target_event=target_event,
+                    extra={"step": step, "action": action},
+                )
+            except Exception:
+                pass
+
+        try:
+            _dl_pre = await snapshot_datalayer_names(page)
+            logger.log_dl_state(
+                f"checkout_nav/{target_event}/max_steps/pre",
+                page.url,
+                _dl_pre,
+                target_event=target_event,
+                extra={"step": self._max_steps},
+            )
+            await page.wait_for_timeout(3000)
+            _dl_post = await snapshot_datalayer_names(page)
+            _pre_sig = set(_dl_pre.get("signal_names", []))
+            _post_sig = set(_dl_post.get("signal_names", []))
+            _emerged = sorted(_post_sig - _pre_sig)
+            logger.log_dl_state(
+                f"checkout_nav/{target_event}/max_steps/post-3s",
+                page.url,
+                _dl_post,
+                target_event=target_event,
+                extra={
+                    "emerged_after_gap": _emerged,
+                    "target_emerged_after_gap": target_event in _emerged,
+                    "note": "log-only",
+                },
+            )
+            _raw_end = await peek_datalayer_raw(page, 14)
+            logger.log_dl_raw_peek(
+                f"checkout_nav/{target_event}/max_steps/post-3s-raw",
+                page.url,
+                _raw_end,
+                target_event=target_event,
+                extra={"step": self._max_steps},
+            )
+        except Exception as _e:
+            logger.debug(f"[CheckoutNavigator] max_steps DL 로그 실패: {_e}")
 
         _evt_summary("max_steps_exhausted")
         return "manual_required"
