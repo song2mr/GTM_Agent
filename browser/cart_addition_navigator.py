@@ -23,7 +23,11 @@ from browser.actions import (
     select_option,
     set_location_hash,
 )
-from browser.listener import event_fingerprint, get_captured_events
+from browser.listener import (
+    event_fingerprint,
+    get_captured_events,
+    get_datalayer_event_context_for_llm,
+)
 from browser.url_context import url_looks_like_pdp
 from config.exploration_limits_loader import cart_addition_max_llm_steps
 from config.llm_models_loader import llm_model
@@ -170,6 +174,15 @@ class CartAdditionNavigator:
         h_cart = _cart_repeat_hint(target_event, action_history)
         budget_block = f"\n{h_cart}\n" if h_cart else ""
 
+        dl_ctx = await get_datalayer_event_context_for_llm(page)
+        dl_block = ""
+        if dl_ctx:
+            dl_block = (
+                "[dataLayer — `event`가 문자열인 객체만, 최근 일부 JSON] "
+                "(배열 본문 기준; 목표 이벤트가 이미 있으면 **captured** 검토.)\n"
+                f"{dl_ctx}\n\n"
+            )
+
         user_content = f"""
 [전략: 장바구니·바스켓 담기 전용 노드]
 현재 URL: {page.url}
@@ -179,7 +192,7 @@ class CartAdditionNavigator:
 현재 스텝: {step}/{self._max_steps}
 {history_text}
 {budget_block}
-페이지 HTML (축약):
+{dl_block}페이지 HTML (축약):
 {snapshot}
 """
         messages = [

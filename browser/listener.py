@@ -2,11 +2,20 @@
 
 page.add_init_script()로 주입하므로 페이지 이동 후에도 리스너가 유지됩니다.
 모든 dataLayer.push 이벤트를 window.__gtm_captured에 누적합니다.
+
+또한 get_captured_events 시점에 window.dataLayer 배열을 훑어,
+`event` 키가 있는 객체를 병합합니다(push 훅만으로 놓치는 초기·교체 배열 항목 보완).
 """
 
 from __future__ import annotations
 
+import json
+
 from playwright.async_api import Page
+
+# LLM 사용자 메시지에 넣는 dataLayer 요약 상한
+_DATALAYER_LLM_MAX_OBJECTS = 35
+_DATALAYER_LLM_MAX_CHARS = 8000
 
 _LISTENER_SCRIPT = """
 (function() {
@@ -49,6 +58,102 @@ _LISTENER_SCRIPT = """
 })();
 """
 
+# push 로그(__gtm_captured)와 배열 본문(dataLayer) 병합 — 동일 항목은 gtm.uniqueEventId 우선으로 제외
+_MERGE_CAPTURED_AND_ARRAY_SCRIPT = """
+() => {
+    const cap = window.__gtm_captured || [];
+    const dl = window.dataLayer;
+    const seen = new Set();
+
+    function stableKey(d) {
+        if (!d || typeof d !== 'object') return '';
+        if (typeof d['gtm.uniqueEventId'] === 'number') {
+            return 'g:' + d['gtm.uniqueEventId'];
+        }
+        try {
+            return 'e:' + String(d.event) + ':' + JSON.stringify(d).slice(0, 240);
+        } catch (e) {
+            return 'x:' + String(d.event);
+        }
+    }
+
+    const out = [];
+    for (let i = 0; i < cap.length; i++) {
+        const e = cap[i];
+        const d = e && e.data;
+        if (!d || typeof d !== 'object') continue;
+        const k = stableKey(d);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(e);
+    }
+
+    if (Array.isArray(dl)) {
+        for (let j = 0; j < dl.length; j++) {
+            const item = dl[j];
+            if (!item || typeof item !== 'object' || typeof item.event !== 'string') continue;
+            const k = stableKey(item);
+            if (seen.has(k)) continue;
+            seen.add(k);
+            const ts = typeof item['gtm.uniqueEventId'] === 'number'
+                ? item['gtm.uniqueEventId']
+                : (1000000000 + j);
+            try {
+                out.push({
+                    data: JSON.parse(JSON.stringify(item)),
+                    timestamp: ts,
+                    url: (typeof window.location !== 'undefined' && window.location.href) || ''
+                });
+            } catch (err) {}
+        }
+    }
+    return out;
+}
+"""
+
+
+def is_datalayer_noise_event_name(event_name: str) -> bool:
+    """GTM 내부·Ajax·스크립트 경로 등 — Planning/Navigator 요약에서 제외(denylist).
+
+    허용 목록을 두지 않는 이유: 비표준/광고주 전용 이벤트명은 그대로 통과시키기 위함.
+    """
+    if not isinstance(event_name, str):
+        return True
+    s = event_name.strip()
+    if not s:
+        return True
+    low = s.lower()
+    if low.startswith("gtm."):
+        return True
+    if low.startswith("ajax"):
+        return True
+    # GTM이 event 자리에 스크립트 URL·짧은 토큰을 넣는 경우
+    if low in (".js", "js", "config"):
+        return True
+    if s.startswith("/") and (".js" in low or "gtm" in low):
+        return True
+    if low.startswith("http://") or low.startswith("https://"):
+        return True
+    return False
+
+
+def is_signal_captured_event(ev: dict) -> bool:
+    """리스너/병합 항목 중 시맨틱 측정에 쓸 만한 dataLayer 이벤트인지."""
+    if ev.get("source") == "manual":
+        return True
+    data = ev.get("data")
+    if not isinstance(data, dict):
+        return False
+    evn = data.get("event")
+    if not isinstance(evn, str):
+        return False
+    return not is_datalayer_noise_event_name(evn)
+
+
+def filter_signal_datalayer_events(events: list[dict]) -> list[dict]:
+    """노이즈 제거 후 목록 (Planning 요약·후속 파이프라인 공통)."""
+    return [e for e in events if is_signal_captured_event(e)]
+
 
 async def inject_listener(page: Page) -> None:
     """Playwright 페이지에 Persistent Event Listener를 주입합니다."""
@@ -56,9 +161,52 @@ async def inject_listener(page: Page) -> None:
 
 
 async def get_captured_events(page: Page) -> list[dict]:
-    """현재까지 캡처된 dataLayer 이벤트 목록을 반환합니다."""
-    events = await page.evaluate("window.__gtm_captured || []")
-    return events
+    """push로 쌓인 __gtm_captured와, 현재 window.dataLayer 배열을 합친 목록을 반환합니다."""
+    events = await page.evaluate(_MERGE_CAPTURED_AND_ARRAY_SCRIPT)
+    if not isinstance(events, list):
+        return []
+    return filter_signal_datalayer_events(events)
+
+
+_DATALAYER_EVENT_ROWS_FOR_LLM_SCRIPT = f"""
+() => {{
+    const dl = window.dataLayer;
+    if (!Array.isArray(dl)) return [];
+    const rows = [];
+    for (let i = 0; i < dl.length; i++) {{
+        const item = dl[i];
+        if (!item || typeof item !== 'object' || typeof item.event !== 'string') continue;
+        try {{
+            rows.push(JSON.parse(JSON.stringify(item)));
+        }} catch (e) {{}}
+    }}
+    return rows.slice(-{_DATALAYER_LLM_MAX_OBJECTS});
+}}
+"""
+
+
+async def get_datalayer_event_context_for_llm(page: Page) -> str:
+    """`event` 문자열이 있는 dataLayer 객체만 JSON 배열로 요약 (Navigator LLM 컨텍스트).
+
+    토큰·메시지 상한을 위해 최근 일부만 포함합니다.
+    """
+    rows = await page.evaluate(_DATALAYER_EVENT_ROWS_FOR_LLM_SCRIPT)
+    if not isinstance(rows, list) or not rows:
+        return ""
+    rows = [
+        r
+        for r in rows
+        if isinstance(r, dict)
+        and isinstance(r.get("event"), str)
+        and not is_datalayer_noise_event_name(r["event"])
+    ]
+    try:
+        s = json.dumps(rows, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return ""
+    if len(s) > _DATALAYER_LLM_MAX_CHARS:
+        s = s[: _DATALAYER_LLM_MAX_CHARS - 24] + "\n…(이하 잘림)"
+    return s
 
 
 def event_fingerprint(ev: dict) -> tuple:

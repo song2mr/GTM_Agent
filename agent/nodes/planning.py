@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import time
 
 from agent.state import GTMAgentState
+from browser.listener import filter_signal_datalayer_events
 from config.llm_models_loader import llm_model
 from docs.fetcher import fetch_docs_for_media
 from utils import logger, token_tracker
@@ -34,6 +35,9 @@ _PLANNING_SYSTEM = """당신은 GTM(Google Tag Manager) 전문가입니다.
 이벤트 이름이 GA4 공식 명칭(add_to_cart)이 아니더라도(addToCart, AddCart 등)
 dataLayer에서 실제 발화된 이벤트라면 해당 이름 그대로 CE Trigger를 만드세요.
 (customEventFilter의 arg1에 실제 이벤트명을 그대로 사용)
+
+아래로 전달되는 **수집 이벤트 JSON**은 `gtm.*`, `ajax*` 등 시스템·기술용 `event` 이름을 **제외(denylist)** 한 뒤의 목록입니다.
+비표준 이름은 제외하지 않으므로, 그중에서 GTM 태그 설계에 필요한 이벤트와 페이로드만 골라 반영하세요.
 
 == Variable 타입 가이드 ==
 
@@ -209,15 +213,23 @@ async def planning(state: GTMAgentState) -> GTMAgentState:
 
     if ga4_measurement_id:
         logger.info(f"[Planning] GA4 Measurement ID: {ga4_measurement_id}")
+    signal_events = filter_signal_datalayer_events(all_events)
     logger.info(
-        f"[Planning] 총 이벤트: {[e.get('data', {}).get('event') for e in all_events]}"
+        f"[Planning] 총 이벤트(raw): {[e.get('data', {}).get('event') for e in all_events]}"
+    )
+    logger.info(
+        f"[Planning] 시그널 이벤트(노이즈 제외): {[e.get('data', {}).get('event') for e in signal_events]}"
     )
 
     # 설계안 생성 루프 (HITL 피드백 반영)
     while True:
         plan = await _generate_plan(
-            tag_type, all_events, existing_config, doc_context,
-            hitl_feedback, dom_context,
+            tag_type,
+            signal_events,
+            existing_config,
+            doc_context,
+            hitl_feedback,
+            dom_context,
             user_request=user_request,
             ga4_measurement_id=ga4_measurement_id,
         )
@@ -332,7 +344,7 @@ def _build_dom_context(
 
 async def _generate_plan(
     tag_type: str,
-    all_events: list[dict],
+    signal_events: list[dict],
     existing_config: dict,
     doc_context: str,
     feedback: str,
@@ -342,8 +354,9 @@ async def _generate_plan(
 ) -> dict:
     """LLM으로 GTM 설계안을 생성합니다."""
     # source 필드를 포함해서 LLM에 전달 (이벤트별 DL/DOM 판단 근거)
+    # 노이즈는 filter_signal_datalayer_events에서 이미 제거된 목록만 받음
     events_summary = json.dumps(
-        [{"source": e.get("source", "datalayer"), **e.get("data", e)} for e in all_events[:20]],
+        [{"source": e.get("source", "datalayer"), **e.get("data", e)} for e in signal_events[:50]],
         ensure_ascii=False,
         indent=2,
     )

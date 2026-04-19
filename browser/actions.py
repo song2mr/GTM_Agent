@@ -98,7 +98,15 @@ async def scroll(
 async def select_option(
     page: Page, selector: str, value: str, timeout: int = 8000
 ) -> ActionResult:
-    """native <select>에 값을 선택하고 input/change를 한 번 더 보냅니다 (카페24 등)."""
+    """native <select>에 값을 선택하고 input/change를 한 번 더 보냅니다 (카페24 등).
+
+    LLM이 화면에 보이는 옵션 문구만 알고 `<option value>`와 다른 경우가 많아,
+    Playwright `select_option(value=…)` 실패 시 같은 문자열로 `label=…`을 한 번 더 시도합니다.
+    """
+    token = (value or "").strip()
+    if not token:
+        return ActionResult(success=False, error="select_option: value가 비어 있음")
+
     emit(
         "thought",
         who="tool",
@@ -106,11 +114,44 @@ async def select_option(
         text=f"{selector} = {value!r}",
         kind="tool",
     )
+    loc = page.locator(selector).first
     try:
-        loc = page.locator(selector).first
         await loc.wait_for(state="attached", timeout=timeout)
         await loc.scroll_into_view_if_needed(timeout=timeout)
-        await loc.select_option(value, timeout=timeout)
+    except PWTimeoutError:
+        return ActionResult(
+            success=False,
+            error=f"타임아웃: select 요소 대기 실패 — {selector}",
+        )
+    except Exception as e:
+        return ActionResult(success=False, error=f"select 요소 준비 실패: {e}")
+
+    strategies: tuple[tuple[str, dict[str, str]], ...] = (
+        ("value", {"value": token}),
+        ("label", {"label": token}),
+    )
+    last_err: str | None = None
+    used_mode: str | None = None
+    for mode, kwargs in strategies:
+        try:
+            await loc.select_option(timeout=timeout, **kwargs)
+            used_mode = mode
+            break
+        except PWTimeoutError:
+            last_err = f"{mode}: 타임아웃"
+        except Exception as e:
+            last_err = f"{mode}: {e}"
+
+    if used_mode is None:
+        return ActionResult(
+            success=False,
+            error=(
+                f"select 옵션 실패 — {selector} = {value!r} "
+                f"(value·label 순서로 시도, 마지막: {last_err})"
+            ),
+        )
+
+    try:
         handle = await loc.element_handle()
         if handle:
             await page.evaluate(
@@ -120,14 +161,13 @@ async def select_option(
                 }""",
                 handle,
             )
-        return ActionResult(success=True, message=f"옵션 선택: {selector} = {value!r}")
-    except PWTimeoutError:
-        return ActionResult(
-            success=False,
-            error=f"타임아웃: select 옵션 실패 — {selector} = {value!r}",
-        )
     except Exception as e:
-        return ActionResult(success=False, error=f"옵션 선택 실패: {e}")
+        return ActionResult(success=False, error=f"옵션 선택 후 이벤트 디스패치 실패: {e}")
+
+    return ActionResult(
+        success=True,
+        message=f"옵션 선택: {selector} = {value!r} ({used_mode})",
+    )
 
 
 async def set_location_hash(page: Page, hash_fragment: str) -> ActionResult:

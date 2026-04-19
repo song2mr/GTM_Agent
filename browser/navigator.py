@@ -22,7 +22,11 @@ from browser.actions import (
     scroll,
     select_option,
 )
-from browser.listener import event_fingerprint, get_captured_events
+from browser.listener import (
+    event_fingerprint,
+    get_captured_events,
+    get_datalayer_event_context_for_llm,
+)
 from browser.url_context import url_looks_like_pdp
 from config.exploration_limits_loader import navigator_max_llm_steps
 from config.llm_models_loader import llm_model
@@ -268,6 +272,7 @@ action 설명:
 
 공통:
 - 히스토리에서 이미 끝난 단계는 건너뜁니다.
+- 사용자 메시지에 **[dataLayer — …]** JSON 블록이 있으면, 그건 현재 `window.dataLayer` 배열에서 **`event`가 문자열인 객체만** 요약한 것입니다. 목표 이벤트가 그 안에 이미 있으면(에이전트가 아직 파이프라인에 넣기 전이어도) **captured**를 고려하세요.
 - 팝업: 실행기가 이 이벤트 루프 **시작 시 한 번** 닫기를 시도했습니다. 가림이 명확할 때만 click으로 닫으세요.
 
 보안:
@@ -383,6 +388,15 @@ class LLMNavigator:
                 budget_hints.append(h_rep)
         budget_block = ("\n" + "\n".join(budget_hints) + "\n") if budget_hints else ""
 
+        dl_ctx = await get_datalayer_event_context_for_llm(page)
+        dl_block = ""
+        if dl_ctx:
+            dl_block = (
+                "[dataLayer — `event`가 문자열인 객체만, 배열 순서상 최근 일부 JSON] "
+                "(배열에만 있고 push 로그에 없던 항목 포함. 이미 목표 이벤트가 있으면 **captured** 검토.)\n"
+                f"{dl_ctx}\n\n"
+            )
+
         user_content = f"""
 {strategy_banner}
 현재 URL: {page.url}
@@ -393,7 +407,7 @@ class LLMNavigator:
 (click: CSS 하나만, 쉼표 금지. 숨김 `<select>` 옵션은 **select_option** + value 사용.)
 {history_text}
 {budget_block}
-페이지 HTML (축약):
+{dl_block}페이지 HTML (축약):
 {snapshot}
 """
         messages = [
