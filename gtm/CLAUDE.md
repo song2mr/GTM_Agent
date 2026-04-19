@@ -12,6 +12,7 @@ GTM API v2 클라이언트, 인증, 데이터 모델.
 | `client.py` | GTM API v2 래퍼 (`GTMClient`) |
 | `models.py` | GTMVariable / GTMTrigger / GTMTag / GTMParameter 데이터클래스 |
 | `dom_variable.py` | DOM Element 변수(`type: "d"`) `parameter[]` 정규화(LLM 별칭 → REST 키) |
+| `spec_builder.py` | CanPlan(`canplan/1`) → GTM 모델 스펙 직렬화 |
 
 ---
 
@@ -110,9 +111,13 @@ GTMVariable(
 
 ### DOM Element 변수 (`type: "d"`)
 
-- 생성 전 `gtm.dom_variable.normalize_dom_element_parameters`가 `parameter[]`를 GTM REST 형식으로 맞춘다.
+- 공식 Variable Dictionary 기준 DOM 변수는 `elementId` + `attributeName`(HTML id 기반)만 지원한다. CSS Selector 모드는 REST에 공개 스펙 없음.
+- `gtm.dom_variable.normalize_dom_element_parameters`가 설계안 1건을 정규화해 `(new_type, parameters)` 튜플 또는 `None`을 반환한다:
+  - ID 모드 → `("d", [elementId, attributeName])`
+  - CSS 모드 → `("jsm", [javascript])` (Custom JavaScript로 자동 변환, 변수 이름은 유지)
+  - 값 비어 있음 → `None` (상위에서 드롭)
 - 공식 Variable 리소스·Parameter 객체: [Variables (REST v2)](https://developers.google.com/tag-platform/tag-manager/api/reference/rest/v2/accounts.containers.workspaces.variables), [Parameter](https://developers.google.com/tag-platform/tag-manager/api/reference/rest/v2/Parameter)
-- 설계안·별칭·선택 방식(`CSS_SELECTOR` / `ID`) 요약: `docs/gtm-variable-api.md`
+- 설계안·별칭·자동 변환 규칙 상세: `docs/gtm-variable-api.md`
 
 ### GTMTrigger
 
@@ -152,3 +157,11 @@ GTMTag(
 | GA4 Tag | `GA4 - {event_name}` | `GA4 - add_to_cart` |
 | Naver Tag | `Naver - {event_name}` | — |
 | Kakao Tag | `Kakao - {event_name}` | — |
+
+---
+
+## 2026-04-19 변경점
+
+- `spec_builder.py`를 추가해 CanPlan 기반 빌드 경로를 분리했다.
+- `gtm_creation`은 CanPlan 경로가 있으면 `_fix_plan` 보정 없이 API 스펙으로 바로 직렬화한다.
+- 레거시 plan은 점진 전환을 위해 호환 경로로만 유지한다.
