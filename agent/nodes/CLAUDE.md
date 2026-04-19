@@ -77,6 +77,8 @@ EXCLUDE_FROM_EXPLORATION_QUEUE = frozenset({"purchase", "refund"})
 
 **LLM 호출·파싱**: `selected_events`/괄호 목록이 있으면 **LLM 호출 자체를 스킵**하고 목록을 그대로 정규화·정렬만 한다. 폴백 경로에서만 `utils.llm_json.make_chat_llm`으로 lazy 생성한 LLM을 `try/except`로 호출하고, 실패 시 `_default_queue(page_type, user_request)`로 Node 3에 진행한다. JSON 파싱은 `parse_llm_json`만 사용한다.
 
+**Playbook 확장 (`exploration_plan`)**: 큐에 남은 각 이벤트에 대해 `agent.playbooks.playbook_for_event(name)`를 불러 `[{event, playbook}]` 형태로 `exploration_plan`에 기록한다. Active Explorer/Navigator가 `surface_goal`·`entry_hints`·`observation.required_fields` 등을 실행 가이드로 사용한다. 정의되지 않은 이벤트는 `_empty_playbook()` 기본값을 받는다.
+
 ---
 
 ## Node 3 — `active_explorer.py`
@@ -84,8 +86,8 @@ EXCLUDE_FROM_EXPLORATION_QUEUE = frozenset({"purchase", "refund"})
 **역할**: LLM Navigator + Playwright 루프로 이벤트 캡처 (시스템 핵심).  
 `cart_addition_events`·`begin_checkout_events`에 포함된 이름은 **여기서 스킵**하고 전용 노드(3.25 / 3.5)에서만 처리한다.
 
-**입력**: `exploration_queue`, `auto_capturable`, `cart_addition_events`, `begin_checkout_events`, `current_url`, `page_type`
-**출력**: `captured_events`, `event_capture_log`, `manual_required`(갱신), `current_url`(탐색 종료 시점 `page.url`)
+**입력**: `exploration_queue`, `auto_capturable`, `cart_addition_events`, `begin_checkout_events`, `current_url`, `page_type`, `site_url_patterns`
+**출력**: `captured_events`(각 항목에 `_attach_evidence`가 표준 `evidence` 메타 부여), `event_capture_log`, `manual_required`(갱신), `current_url`(탐색 종료 시점 `page.url`), `site_url_patterns`(관측 regex 머지), `exploration_failures`
 
 **이벤트 캡처 우선순위 (반드시 이 순서)**
 1. dataLayer 직접 캡처 (`window.__gtm_captured`)
@@ -112,6 +114,12 @@ DL 발화 → source 없음(CE Trigger), 미발화 → source="dom_extraction"(C
 **로그(멈춤·dataLayer 추적)**: `run.log`에 위 항목 + `[DL]`·`[DL-Diag]`·`[get_captured_events]`(파일 DEBUG) 등. 구조화 분석은 `logs/{run_id}/datalayer_trace.jsonl`, `datalayer_diagnose.jsonl`, `datalayer_raw_tail.jsonl`, `page_state.jsonl` — `utils/logger.py`·`browser/CLAUDE.md` 참고. PDP에서 `view_item`만 단독 확인할 때는 `scripts/check_pdp_view_item.py`.
 
 **UI 동기화**: `manual_required`가 비어 있고 **`cart_addition_events`·`begin_checkout_events`도 비어 있을 때만** Node 3 종료 시 `manual_capture`를 `skip`한다(뒤에 전용 탐색 노드가 올 수 있음).
+
+### Evidence / URL 패턴 / Failure 기록
+
+- `_url_to_observed_pattern(url)` — 방문 URL을 `^https?://host/path(?:[/?].*)?$` 형태의 canonical regex로 변환해 `site_url_patterns`에 머지. Playbook/Planning이 실측 경로를 trigger 조건으로 쓸 때 seed보다 우선한다.
+- `_attach_evidence(event, state)` — `captured_events`의 각 아이템에 `evidence = {source, dl_health, url_patterns, failures}`를 붙인다. Planning은 이 표준 메타만 읽는다(레거시 필드 의존 금지).
+- `exploration_failures` — Playbook의 `surface_goal`(예: PDP 진입)이 채워지지 않았을 때 `{event, reason: "surface_unreached", detail, url}` 한 줄 기록. `EvidencePack.events[].failures`로 올라오고 Reporter가 "특이사항"에 노출한다.
 
 ---
 
@@ -156,12 +164,12 @@ CLI 모드에서는 `input()`, file 모드에서는 hitl_response.json 방식과
 
 ## Node 5 — `planning.py`
 
-**역할**: GTM 설계안 생성(LLM) + HITL 승인
+**역할**: GTM 설계안 생성(LLM) + CanPlan 정규화 + HITL 승인
 
-**입력**: `captured_events`, `manual_capture_results`, `extraction_method`, `tag_type`, `measurement_id`
-**출력**: `plan`, `plan_approved`, `hitl_feedback`, `doc_context`
+**입력**: `captured_events`(표준 `evidence` 메타 포함), `manual_capture_results`, `extraction_method`, `tag_type`, `measurement_id`, `site_url_patterns`, `exploration_failures`
+**출력**: `draft_plan`, `canplan`, `canplan_hash`, `normalize_errors`, `evidence_pack`, `plan`, `plan_approved`, `hitl_feedback`, `doc_context`
 
-**설계안 JSON 구조**
+**설계안 JSON 구조 (LLM 초안 = `draft_plan`)**
 ```json
 {
   "variables": [{ "name": "DLV - event", "type": "v", "parameters": [...] }],
@@ -170,19 +178,27 @@ CLI 모드에서는 `input()`, file 모드에서는 hitl_response.json 방식과
 }
 ```
 
-**단일 시스템 프롬프트 (`_PLANNING_SYSTEM`)**
-LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
-- `source` 없음 / `"datalayer"` / `"datalayer+dom"` → CE Trigger + DLV Variable
-- `source = "dom_extraction"` → Click Trigger + DOM/CJS Variable
-- 비표준 이벤트명(addToCart 등)도 실제 이름 그대로 CE Trigger 생성
+**CanPlan 파이프라인**
+1. `evidence_pack = canplan.build_evidence_pack(state, target_events)` — DL health 판정·URL 패턴 머지·fired_events·failures 번들.
+2. LLM 호출(프롬프트에 `evidence_pack` 주입) → `draft_plan`.
+3. `canplan, errors = normalize.normalize_draft_plan(draft_plan, allowed_events=..., ga4_measurement_id=..., evidence_pack=evidence_pack)`.
+4. `errors`가 남으면 `summarize_issues(errors)` + 직전 `canplan`을 **다음 LLM 프롬프트에 재주입**해 재설계(`STRICT_CANPLAN=1`이면 1회 재시도 한도).
+5. 최종 `canplan`의 해시(`canplan_hash`)와 `normalize_errors`를 `hitl_request` 이벤트·`state`에 기록.
+6. `plan` 필드는 UI/레거시 호환을 위해 `canplan`에서 파생된 동등 표현을 유지한다.
 
-`_classify_events` / `effective_method` 전역 분기 제거 — 이벤트별 개별 판단.
+**단일 시스템 프롬프트 (`_PLANNING_SYSTEM`)**
+LLM이 각 이벤트의 `evidence.source`·`evidence.dl_health`를 보고 판단:
+- `dl_health.healthy` ≥ 1 + `evidence.source != "dom_extraction"` → CE Trigger + DLV Variable
+- `evidence.source = "dom_extraction"` (또는 DL 미발화 + 로드타임 이벤트) → Click Trigger/Pageview Trigger + DOM/CJS Variable
+- Custom JavaScript 변수는 `cjs_templates`에 등록된 `template_id`만 사용(자유 JS 금지, 정규화가 `POLICY_VIOLATION`으로 거부).
+- `in_set` 연산자 사용 금지(정규화가 `OP_UNSUPPORTED`로 거부).
 
 **HITL 대기**
 - `hitl_mode="cli"` → `input()` 폴링
 - `hitl_mode="file"` → `logs/{run_id}/hitl_response.json` 5분 폴링, 타임아웃 시 자동 승인
+- `hitl_request` payload: `{kind:"plan", plan, normalize_errors, canplan_hash}` — UI `HitlScreen`이 정규화 이슈 패널과 해시 표시에 사용.
 
-거부 시 `hitl_feedback`을 받아 `while True` 루프에서 재설계.
+거부 시 `hitl_feedback`을 받아 `while True` 루프에서 재설계(직전 CanPlan + normalize 요약 함께 재주입).
 
 ---
 
@@ -195,7 +211,13 @@ LLM이 각 이벤트의 `source` 필드를 보고 이벤트별로 판단:
 
 **실행 순서 엄수**: Variable → Trigger → Tag (의존 관계)
 **이름 충돌**: `create_or_update_*` 메서드로 덮어쓰기
-**DOM 변수 (`type: "d"`)**: 공식 API는 `elementId` + `attributeName`(HTML id 기반)만 지원. `_build_variable`이 `gtm.dom_variable.normalize_dom_element_parameters`로 정규화하며, **CSS selector가 필요한 케이스는 자동으로 `type: "jsm"` Custom JavaScript 변수로 변환**된다(이름 유지). 집계 CJS가 동일 selector를 중복하지 않도록 `{{DOM - X}}` 참조 스타일을 **프롬프트(`planning.py`)에서 유도**한다(자동 치환 안전망은 기존 LLM 패턴을 깨뜨릴 수 있어 미도입). 상세·근거는 `docs/gtm-variable-api.md`.
+
+**CanPlan 경로 우선**: `state["canplan"].get("version") == "canplan/1"`이면 `gtm.spec_builder.build_specs_from_canplan(canplan)`으로 직렬화된 `(variables, triggers, tags)`를 그대로 API에 밀어넣는다(`_fix_plan` 미경유). CanPlan이 없거나 빈 경우에만 레거시 `plan` 경로(`_build_variable` 등)를 사용한다.
+
+**레거시 경로 방어**: 레거시 `plan`을 사용할 때 `_reject_in_set_in_legacy(plan)`가 트리거 조건에서 `in_set`이 발견되면 즉시 `RuntimeError`. UI `thought`로 "legacy plan path used — STRICT_CANPLAN=1 권장" 배너를 띄운다.
+
+**DOM 변수 (`type: "d"`)**: 공식 API는 `elementId` + `attributeName`(HTML id 기반)만 지원. `_build_variable`이 `gtm.dom_variable.normalize_dom_element_parameters`로 정규화하며, **CSS selector가 필요한 케이스는 자동으로 `type: "jsm"` Custom JavaScript 변수로 변환**된다(이름 유지). CanPlan 경로에서는 `spec_builder`가 `cjs_templates`에 등록된 템플릿을 렌더해 동일한 결과를 만든다. 상세·근거는 `docs/gtm-variable-api.md`.
+
 **Rate Limit(429)**: 최대 3회 재시도(30/60/90초), 실패 시 기존 `gtm-ai-*` workspace 재사용
 
 **Workspace 상한 HITL**:

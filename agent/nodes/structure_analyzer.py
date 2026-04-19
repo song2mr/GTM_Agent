@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from playwright.async_api import Page, async_playwright
@@ -117,19 +118,26 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
     datalayer_status = state.get("datalayer_status", "none")
 
     if datalayer_status == "full":
-        logger.info("[StructureAnalyzer] dataLayer 완전 → 분석 스킵")
-        emit("thought", who="agent", label="StructureAnalyzer",
-             text="dataLayer 완전 (full) → 분석 스킵")
+        logger.info("[StructureAnalyzer] dataLayer full → 얕은 수집 모드 실행")
+        emit(
+            "thought",
+            who="agent",
+            label="StructureAnalyzer",
+            text="dataLayer full 감지: DOM/JSON-LD 얕은 수집만 수행",
+        )
+        shallow = await _collect_shallow_candidates_for_full(state)
         _dur = int((time.time() - _started) * 1000)
-        emit("node_exit", node_id=1.5, status="skipped", duration_ms=_dur)
+        emit("node_exit", node_id=1.5, status="done", duration_ms=_dur)
         update_state(nodes_status={"structure_analyzer": "done"})
         return {
             **state,
             "extraction_method": "datalayer",
-            "dom_selectors": {},
-            "selector_validation": {},
-            "json_ld_data": {},
-            "click_triggers": {},
+            "dom_selectors": shallow["dom_selectors"],
+            "selector_validation": shallow["selector_validation"],
+            "json_ld_data": shallow["json_ld_data"],
+            "click_triggers": shallow["click_triggers"],
+            "site_url_patterns": shallow["url_patterns"],
+            "site_spa": shallow["site_spa"],
         }
 
     target_url = state["target_url"]
@@ -147,6 +155,8 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
     )
 
     result: GTMAgentState | None = None
+    site_spa = False
+    site_url_patterns = _infer_url_patterns(target_url, page_type)
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=headless,
@@ -159,6 +169,7 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
             await inject_listener(page)
             await navigate(page, target_url)
             await page.wait_for_timeout(2000)
+            site_spa = await _guess_spa(page)
 
             try:
                 _dl_diag = await diagnose_datalayer(page)
@@ -197,6 +208,8 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
                         "selector_validation": selector_validation,
                         "json_ld_data": json_ld_raw,
                         "click_triggers": click_triggers,
+                        "site_url_patterns": site_url_patterns,
+                        "site_spa": site_spa,
                     }
 
             if result is None:
@@ -267,6 +280,8 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
                     "selector_validation": selector_validation,
                     "json_ld_data": json_ld_raw if json_ld_raw else {},
                     "click_triggers": click_triggers,
+                    "site_url_patterns": site_url_patterns,
+                    "site_spa": site_spa,
                 }
 
         finally:
@@ -295,6 +310,168 @@ async def structure_analyzer(state: GTMAgentState) -> GTMAgentState:
     update_state(nodes_status={"structure_analyzer": "done"})
 
     return result
+
+
+async def _collect_shallow_candidates_for_full(state: GTMAgentState) -> dict:
+    """`datalayer_status=full`에서도 Evidence 재료가 고갈되지 않도록 최소 후보를 수집."""
+    target_url = state["target_url"]
+    page_type = str(state.get("page_type", "unknown")).lower()
+    selected_events = [str(e).strip().lower() for e in (state.get("selected_events") or []) if str(e).strip()]
+
+    shallow_fields = _shallow_required_fields(page_type, selected_events)
+    dom_selectors: dict = {}
+    selector_validation: dict = {}
+    json_ld_data: dict = {}
+    click_triggers: dict = {}
+    site_spa = False
+    headless = os.environ.get("GTM_AI_HEADLESS", "").lower() in ("1", "true", "yes")
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=headless,
+            args=["--ignore-certificate-errors", "--ignore-ssl-errors"],
+        )
+        context = None
+        try:
+            context = await browser.new_context(ignore_https_errors=True)
+            page = await context.new_page()
+            await inject_listener(page)
+            await navigate(page, target_url)
+            await page.wait_for_timeout(1200)
+
+            site_spa = await _guess_spa(page)
+            click_triggers = await _find_click_triggers(page, page_type)
+
+            for field in shallow_fields:
+                for candidate in _selector_candidates(field):
+                    value = await _validate_selector(page, candidate["selector"], candidate.get("attribute"))
+                    if value is not None:
+                        dom_selectors[field] = candidate
+                        selector_validation[field] = value
+                        break
+
+            json_ld_data = await _extract_jsonld_shallow(page)
+            url_patterns = _infer_url_patterns(state.get("target_url", ""), page_type)
+            logger.info(
+                "[StructureAnalyzer] shallow 완료 "
+                f"fields={len(selector_validation)} click={len(click_triggers)} jsonld={bool(json_ld_data)} spa={site_spa}"
+            )
+            return {
+                "dom_selectors": dom_selectors,
+                "selector_validation": selector_validation,
+                "json_ld_data": json_ld_data,
+                "click_triggers": click_triggers,
+                "url_patterns": url_patterns,
+                "site_spa": site_spa,
+            }
+        finally:
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
+
+
+def _shallow_required_fields(page_type: str, selected_events: list[str]) -> list[str]:
+    fields = {"item_name", "item_id", "price", "currency"}
+    if page_type in ("cart", "checkout"):
+        fields.update({"quantity", "cart_total"})
+    if "add_to_wishlist" in selected_events:
+        fields.add("item_name")
+    return sorted(fields)
+
+
+def _selector_candidates(field: str) -> list[dict]:
+    mapping: dict[str, list[dict]] = {
+        "item_name": [
+            {"selector": "meta[property='og:title']", "attribute": "content"},
+            {"selector": "[itemprop='name']", "attribute": "content"},
+            {"selector": "h1", "attribute": "textContent"},
+        ],
+        "item_id": [
+            {"selector": "[itemprop='sku']", "attribute": "content"},
+            {"selector": "[data-product-id]", "attribute": "data-product-id"},
+            {"selector": "[data-pid]", "attribute": "data-pid"},
+        ],
+        "price": [
+            {"selector": "[itemprop='price']", "attribute": "content"},
+            {"selector": "[data-price]", "attribute": "data-price"},
+            {"selector": ".price", "attribute": "textContent"},
+        ],
+        "currency": [
+            {"selector": "[itemprop='priceCurrency']", "attribute": "content"},
+            {"selector": "meta[property='product:price:currency']", "attribute": "content"},
+        ],
+        "quantity": [
+            {"selector": "input[name*='qty']", "attribute": "value"},
+            {"selector": "input[type='number']", "attribute": "value"},
+        ],
+        "cart_total": [
+            {"selector": "[data-total-price]", "attribute": "data-total-price"},
+            {"selector": ".total-price", "attribute": "textContent"},
+        ],
+    }
+    return mapping.get(field, [])
+
+
+async def _extract_jsonld_shallow(page: Page) -> dict:
+    try:
+        rows = await page.evaluate(
+            """() => {
+                const out = {};
+                const nodes = [...document.querySelectorAll("script[type='application/ld+json']")];
+                if (!nodes.length) return out;
+                for (const node of nodes.slice(0, 3)) {
+                    try {
+                        const payload = JSON.parse(node.textContent || "{}");
+                        if (payload && typeof payload === "object") {
+                            if (payload.name && !out.name) out.name = payload.name;
+                            if (payload.sku && !out.sku) out.sku = payload.sku;
+                            if (payload.offers && payload.offers.price && !out["offers.price"]) out["offers.price"] = payload.offers.price;
+                            if (payload.offers && payload.offers.priceCurrency && !out["offers.priceCurrency"]) out["offers.priceCurrency"] = payload.offers.priceCurrency;
+                        }
+                    } catch (e) {}
+                }
+                return out;
+            }"""
+        )
+        return rows if isinstance(rows, dict) else {}
+    except Exception:
+        return {}
+
+
+async def _guess_spa(page: Page) -> bool:
+    try:
+        return bool(
+            await page.evaluate(
+                """() => {
+                    try {
+                        if (!window.history || typeof window.history.pushState !== "function") return false;
+                        const html = document.documentElement ? document.documentElement.innerHTML : "";
+                        return /__NEXT_DATA__|data-reactroot|ng-version|vite/i.test(html);
+                    } catch (e) { return false; }
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def _infer_url_patterns(target_url: str, page_type: str) -> dict:
+    path = urlparse(target_url).path or "/"
+    if page_type == "pdp":
+        return {"pdp": r"^/product/[^/]+/?$", "current": "^" + path.rstrip("/") + "/?$"}
+    if page_type == "plp":
+        return {"plp": r"^/(category|products?)/[^/]+/?$", "current": "^" + path.rstrip("/") + "/?$"}
+    if page_type == "cart":
+        return {"cart": r"^/cart/?$", "current": "^" + path.rstrip("/") + "/?$"}
+    if page_type == "checkout":
+        return {"checkout": r"^/(checkout|order)/?.*$", "current": "^" + path.rstrip("/") + "/?$"}
+    return {"current": "^" + path.rstrip("/") + "/?$"}
 
 
 async def _analyze_html(

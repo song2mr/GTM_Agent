@@ -1,16 +1,25 @@
-/* global React, Icon, Timeline, Thoughts, Json, Markdown */
+/* global React, Icon, Timeline, Thoughts, Json, Markdown, EventPicker */
 const { useState, useEffect } = React;
 
 // ── 1. Run Start screen ─────────────────────────────────────────────────
+const DEFAULT_EVENTS = [
+  "view_item", "add_to_cart", "add_to_wishlist", "begin_checkout",
+];
+
 function RunStartScreen({ onStart }) {
   const saved = (() => { try { return JSON.parse(localStorage.getItem("gtm:config") || "{}"); } catch { return {}; } })();
   const [url, setUrl] = useState(saved.url || "https://shop.leekorea.co.kr");
-  const [req, setReq] = useState(saved.req || "GA4 이커머스 이벤트 전체 설정 (view_item_list, view_item, add_to_cart, add_to_wishlist, view_cart, begin_checkout)");
+  const [req, setReq] = useState(saved.req || "GA4 이커머스 이벤트 설정");
   const [tag, setTag] = useState(saved.tag || "GA4");
   const [accountId, setAccountId] = useState(saved.accountId || "");
   const [containerId, setContainerId] = useState(saved.containerId || "");
   const [workspaceId, setWorkspaceId] = useState(saved.workspaceId || "");
   const [measurementId, setMeasurementId] = useState(saved.measurementId || "");
+  const [selectedEvents, setSelectedEvents] = useState(
+    Array.isArray(saved.selectedEvents) && saved.selectedEvents.length > 0
+      ? saved.selectedEvents
+      : DEFAULT_EVENTS
+  );
   const [rememberCreds, setRememberCreds] = useState(saved.rememberCreds !== false);
   const [credsOpen, setCredsOpen] = useState(!(saved.accountId && saved.containerId));
   const [starting, setStarting] = useState(false);
@@ -20,6 +29,7 @@ function RunStartScreen({ onStart }) {
     if (rememberCreds) {
       localStorage.setItem("gtm:config", JSON.stringify({
         url, req, tag, accountId, containerId, workspaceId, measurementId, rememberCreds,
+        selectedEvents,
       }));
     } else {
       localStorage.removeItem("gtm:config");
@@ -38,6 +48,7 @@ function RunStartScreen({ onStart }) {
           container_id: containerId,
           workspace_id: workspaceId,
           measurement_id: measurementId,
+          selected_events: selectedEvents,
         }),
       });
       const data = await res.json();
@@ -52,7 +63,7 @@ function RunStartScreen({ onStart }) {
     setStarting(false);
   };
 
-  const canStart = url && req && accountId && containerId && !starting;
+  const canStart = url && req && accountId && containerId && selectedEvents.length > 0 && !starting;
 
   const history = window.useHistory();
   const lastRun = history[0];
@@ -62,7 +73,7 @@ function RunStartScreen({ onStart }) {
       <div className="page-header">
         <div>
           <h1 className="page-title">새 Run 시작</h1>
-          <div className="page-sub">자연어로 요청하세요. 에이전트가 페이지를 탐색해 GTM을 설계·생성합니다.</div>
+          <div className="page-sub">설치할 이벤트를 선택하세요. 에이전트가 페이지를 탐색해 GTM을 설계·생성합니다.</div>
         </div>
         <div className="row tight">
           {lastRun ? <span className="chip"><Icon name="clock" size={12} /> 마지막 Run · {lastRun.t ? lastRun.t.slice(0, 16) : "—"}</span> : null}
@@ -138,12 +149,22 @@ function RunStartScreen({ onStart }) {
             <input className="input mono" value={url} onChange={e => setUrl(e.target.value)} />
           </div>
           <div className="field">
-            <label>USER_REQUEST</label>
-            <textarea className="textarea" value={req} onChange={e => setReq(e.target.value)} />
+            <label>USER_REQUEST <span className="muted-mono" style={{ fontWeight: 400 }}>— 요청 메모 (자유 텍스트)</span></label>
+            <textarea className="textarea" value={req} onChange={e => setReq(e.target.value)}
+                      placeholder="예: GA4 이커머스 · 위시리스트 포함 · 모바일 우선" />
             <div className="muted-mono">
-              Measurement ID는 위 필드에서 입력하면 Constant 변수로 자동 주입됩니다.
+              실제 설치 대상은 <b>아래 "설치할 이벤트"</b> 에서만 결정됩니다. 텍스트는 참고용 메모입니다.
+              Measurement ID는 상단 폼에서 입력하면 Constant 변수로 자동 주입됩니다.
             </div>
           </div>
+
+          <div className="field">
+            <label>
+              설치할 이벤트 <span className="muted-mono" style={{ fontWeight: 400 }}>— 체크한 이벤트만 탐색·태그 생성</span>
+            </label>
+            <EventPicker value={selectedEvents} onChange={setSelectedEvents} />
+          </div>
+
           <div className="field">
             <label>TAG_TYPE</label>
             <div className="radio-row">
@@ -178,7 +199,7 @@ function RunStartScreen({ onStart }) {
             <div className="muted-mono" style={{ color: "var(--warn)", fontSize: 11.5 }}>{error}</div>
           ) : !canStart && !starting ? (
             <div className="muted-mono" style={{ color: "var(--warn)", fontSize: 11.5 }}>
-              GTM_ACCOUNT_ID와 GTM_CONTAINER_ID는 필수입니다.
+              GTM_ACCOUNT_ID · GTM_CONTAINER_ID · 설치할 이벤트 1개 이상은 필수입니다.
             </div>
           ) : null}
         </div>
@@ -347,7 +368,7 @@ function RunLiveScreen({ runId }) {
 
 // ── 3. HITL Approval ────────────────────────────────────────────────────
 function HitlScreen({ runId, onApprove }) {
-  const { plan, state, workspaceAsk } = window.useRunLog(runId);
+  const { plan, planMeta, state, workspaceAsk } = window.useRunLog(runId);
   const [feedback, setFeedback] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -615,7 +636,45 @@ function HitlScreen({ runId, onApprove }) {
             <dt>Variables</dt><dd>{vars.length}개</dd>
             <dt>Triggers</dt><dd>{trigs.length}개</dd>
             <dt>Tags</dt><dd>{tags.length}개</dd>
+            {planMeta && planMeta.canplan_hash
+              ? <><dt>CanPlan Hash</dt><dd className="mono" style={{ fontSize: 11 }}>{planMeta.canplan_hash.slice(0, 12)}…</dd></>
+              : null}
           </div>
+
+          {planMeta && (planMeta.normalize_errors || []).length > 0 ? (
+            <div className="panel" style={{ boxShadow: "none", borderColor: "var(--warn-border, #f0b90b)" }}>
+              <div className="panel-head">
+                <div className="panel-title">
+                  정규화 이슈
+                  <span className="chip warn">+{planMeta.normalize_errors.length}</span>
+                </div>
+              </div>
+              <div className="panel-body" style={{ padding: 0 }}>
+                <table className="plan-table">
+                  <thead>
+                    <tr>
+                      <th>severity</th>
+                      <th>code</th>
+                      <th>message</th>
+                      <th>hint</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planMeta.normalize_errors.slice(0, 25).map((e, i) => (
+                      <tr key={i}>
+                        <td className="mono" style={{ fontSize: 11, color: e.severity === "error" ? "crimson" : "var(--ink-3)" }}>
+                          {e.severity}
+                        </td>
+                        <td className="mono" style={{ fontSize: 11 }}>{e.code}</td>
+                        <td style={{ fontSize: 12 }}>{e.message}</td>
+                        <td style={{ fontSize: 11, color: "var(--ink-3)" }}>{e.hint || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
 
           {[
             { key: "variables", label: "Variables", list: vars },

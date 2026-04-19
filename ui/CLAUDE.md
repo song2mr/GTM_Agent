@@ -67,12 +67,13 @@ serve_ui.py
 
 ### useRunLog(runId)
 ```js
-const { state, events, thoughts, plan, workspaceAsk, publishResult } = useRunLog(runId)
+const { state, events, thoughts, plan, planMeta, workspaceAsk, publishResult } = useRunLog(runId)
 ```
 - `state`: `state.json` 전체 (nodes, status, token_usage, `created_*`, `workspace_id` 등)
 - `events`: `datalayer_event` 타입만 필터
 - `thoughts`: `thought` 타입만 필터. 증분 파싱 시 직전 `node_enter`의 `node_key`를 `nodeKey` 필드로 붙여 **노드별 필터**에 사용. `time`은 로그 `ts`(UTC)를 **`Asia/Seoul`** 기준 `HH:mm:ss`로 변환한 값
 - `plan`: `hitl_request` 이벤트 중 `kind`가 없거나 `"plan"`인 것의 `plan` 필드 (Node 5 설계안 검토)
+- `planMeta`: 같은 `hitl_request(plan)` 이벤트의 `{ normalize_errors, canplan_hash }`. 갱신 시 새 plan으로 교체(이전 이슈가 남지 않음). `HitlScreen`이 CanPlan Hash 배지와 **정규화 이슈 패널**을 그리는 근거
 - `workspaceAsk`: `hitl_request` 이벤트 중 `kind="workspace_full"`의 페이로드 — `{workspaces, current_count, limit, default_reuse_id, message}`. `runner.py`가 그래프 시작 전에 한도(3)를 감지했을 때 또는 Node 6에서 감지했을 때 세팅(폼에 `workspace_id`가 이미 있으면 사전 HITL 생략). `hitl_decision` 수신 시 `null`로 초기화
 - `publishResult`: `publish_result` 이벤트
 
@@ -177,6 +178,10 @@ CSS 변수(`:root`) 기반 다크 테마. 주요 변수:
 
 ## 2026-04-19 업데이트 (CanPlan/HITL)
 
-- Planning HITL 페이로드는 `plan` 외에 `normalize_errors`를 함께 전달한다.
-- Reporter는 `canplan_hash`와 정규화 결과 요약을 출력하므로, UI도 해당 필드를 읽어 확장할 수 있다.
-- 전환기에는 기존 `plan` 렌더와 CanPlan 렌더를 병행할 수 있도록 상태 필드를 유지한다.
+- Planning HITL 페이로드는 `plan` 외에 `normalize_errors`·`canplan_hash`를 함께 전달한다(`utils/CLAUDE.md` 표 참고).
+- `useRunLog`가 `planMeta = {normalize_errors, canplan_hash}`를 별도 상태로 노출한다.
+- `HitlScreen` 확장 UI:
+  - Plan 요약 카드 우측에 **CanPlan Hash** 짧은(7~8자) 뱃지 표시(전체 해시는 툴팁/복사).
+  - `normalize_errors`가 있으면 **"정규화 이슈"** 패널을 plan 리스트 위에 렌더 — `severity`에 따라 색상(`--warn`/`--danger`), `code` · `message` · `hint` 노출. 이슈가 모두 warning이면 승인 버튼 활성, error가 하나라도 있으면 피드백 입력을 유도한다.
+- Reporter는 `canplan_hash`와 `summarize_issues`를 보고서에 포함하므로, ReportScreen도 같은 해시를 보여 HITL 화면과 대조 가능하다.
+- 전환기에는 기존 `plan` 렌더와 CanPlan 렌더를 병행할 수 있도록 상태 필드(`plan`, `planMeta`)를 모두 유지한다.

@@ -35,15 +35,11 @@ const Icon = ({ name, size = 16, className = "" }) => {
 };
 
 // ── Sidebar ──────────────────────────────────────────────────────────────
-function Sidebar({ route, onRoute, running, hitlWaiting }) {
-  const { activeWorkspace, workspaces } = window.useWorkspaces();
-  const wsLabel = activeWorkspace ? activeWorkspace.name : (workspaces.length === 0 ? "워크스페이스 없음" : "선택 안 됨");
-  const wsCount = activeWorkspace ? (activeWorkspace.containerId || "—") : null;
-
+function Sidebar({ route, onRoute, running }) {
   const items = [
     { key: "run",      label: "Run",        icon: "run",       count: running ? "●" : "" },
-    { key: "history",  label: "History",    icon: "history",   count: "" },
-    { key: "hitl",     label: "Approvals",  icon: "sparkle",   count: hitlWaiting ? "●" : "" },
+    { key: "history",  label: "History",    icon: "history",   count: "128" },
+    { key: "hitl",     label: "Approvals",  icon: "sparkle",   count: "1" },
     { key: "resources",label: "Resources",  icon: "resources", count: "" },
     { key: "report",   label: "Report",     icon: "report",    count: "" },
   ];
@@ -57,12 +53,10 @@ function Sidebar({ route, onRoute, running, hitlWaiting }) {
         </div>
       </div>
       <div className="nav-section-label">워크스페이스</div>
-      <div className="nav-item" aria-current={route === "workspace"}
-           onClick={() => onRoute("workspace")}
-           style={{ cursor: "pointer" }}>
+      <div className="nav-item" aria-current="false">
         <Icon name="home" className="ico" />
-        <span className="nowrap" style={{ flex: 1, minWidth: 0 }}>{wsLabel}</span>
-        {wsCount ? <span className="count mono" style={{ fontSize: 10.5 }}>{wsCount.slice(0, 12)}</span> : null}
+        <span>Shop · leekorea</span>
+        <span className="count">prod</span>
       </div>
 
       <div className="nav-section-label">에이전트</div>
@@ -76,16 +70,12 @@ function Sidebar({ route, onRoute, running, hitlWaiting }) {
       ))}
 
       <div className="nav-section-label">시스템</div>
-      <div className="nav-item" style={{ opacity: 0.45, cursor: "default" }}>
-        <Icon name="settings" className="ico" /><span>설정</span>
-      </div>
-      <div className="nav-item" style={{ opacity: 0.45, cursor: "default" }}>
-        <Icon name="beaker" className="ico" /><span>실험 모드</span><span className="count mono">β</span>
-      </div>
+      <div className="nav-item"><Icon name="settings" className="ico" /><span>설정</span></div>
+      <div className="nav-item"><Icon name="beaker" className="ico" /><span>실험 모드</span><span className="count mono">β</span></div>
 
       <div className="sidebar-footer">
         <span className={`dot ${running ? "" : "idle"}`} />
-        {running ? <>에이전트 실행 중</> : <>대기 중</>}
+        {running ? <>에이전트 실행 중 · Node&nbsp;3</> : <>대기 중</>}
       </div>
     </aside>
   );
@@ -114,17 +104,15 @@ function Timeline({ nodes, activeId, onSelect }) {
     <div className="timeline">
       <div className="timeline-head">
         <h3>Node 진행 상황</h3>
-        <span className="muted-mono">
-          {nodes.filter(n => ["done", "skip", "failed"].includes(n.status)).length}/{nodes.length}
-        </span>
+        <span className="muted-mono">{nodes.filter(n => n.status === "done").length}/{nodes.length}</span>
       </div>
       <div className="tl-list">
         {nodes.map((n, i) => (
           <div key={n.id} className={`tl-node ${n.status} ${n.id === activeId ? "active" : ""}`}
                onClick={() => onSelect && onSelect(n.id)}>
             <div className="tl-spine">
-              <div className={`tl-bullet ${n.status === "skip" ? "skip" : n.status}`}>
-                {n.status === "done" ? "✓" : n.status === "skip" ? "−" : String(n.id)}
+              <div className={`tl-bullet ${n.status}`}>
+                {n.status === "done" ? "✓" : String(n.id)}
               </div>
               {i < nodes.length - 1 ? <div className="tl-line" /> : null}
             </div>
@@ -133,8 +121,6 @@ function Timeline({ nodes, activeId, onSelect }) {
                 {n.title}
                 {n.status === "run" ? <span className="chip accent"><span className="mini-dot" />running</span> : null}
                 {n.status === "queued" ? <span className="chip">queued</span> : null}
-                {n.status === "skip" ? <span className="chip">생략</span> : null}
-                {n.status === "failed" ? <span className="chip danger">failed</span> : null}
               </div>
               <div className="tl-desc">{n.sub}</div>
             </div>
@@ -172,7 +158,7 @@ function Thoughts({ items, typing }) {
           <div className="who agent">AI</div>
           <div className="bubble agent typing">
             <div className="meta"><b>Navigator</b><span>지금</span></div>
-            <span>에이전트가 다음 동작을 실행하거나 LLM 응답을 기다리는 중입니다.</span>
+            <span>장바구니 담기 후 dataLayer 응답을 기다리는 중</span>
             <span className="cursor" />
           </div>
         </div>
@@ -264,146 +250,4 @@ function Markdown({ source }) {
   return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-// ── Event Scope Picker (GA4 이벤트 체크박스 + 프리셋 + 커스텀 입력) ────────
-// RunStartScreen에서 "설치할 이벤트"를 선택할 때 사용.
-// 값은 소문자 이벤트명 배열로 관리하고, strict 모드의 단일 근거가 된다.
-const GA4_EVENT_CATALOG = [
-  { name: "page_view",         label: "페이지 조회",      hint: "모든 페이지 로드" },
-  { name: "view_item_list",    label: "목록 조회",        hint: "PLP · 카테고리" },
-  { name: "select_item",       label: "상품 선택",        hint: "PLP → PDP 이동 클릭" },
-  { name: "view_item",         label: "상품 상세",        hint: "PDP 진입" },
-  { name: "add_to_wishlist",   label: "위시리스트",       hint: "찜·하트 버튼" },
-  { name: "add_to_cart",       label: "장바구니 담기",    hint: "PDP 담기 버튼" },
-  { name: "view_cart",         label: "장바구니 보기",    hint: "장바구니 페이지" },
-  { name: "remove_from_cart",  label: "장바구니 삭제",    hint: "카트 내 삭제" },
-  { name: "begin_checkout",    label: "결제 시작",        hint: "구매하기 진입" },
-  { name: "add_shipping_info", label: "배송정보 입력",    hint: "체크아웃 단계" },
-  { name: "add_payment_info",  label: "결제정보 입력",    hint: "체크아웃 단계" },
-];
-
-const GA4_MANUAL_ONLY = [
-  { name: "purchase", label: "구매 완료", hint: "서버·주문완료 (Manual 전용)" },
-  { name: "refund",   label: "환불",     hint: "서버·백오피스 (Manual 전용)" },
-];
-
-const EVENT_PRESETS = [
-  { id: "full_funnel", label: "GA4 이커머스 전체",
-    desc: "권장 설치형 이벤트 전체",
-    events: [
-      "page_view","view_item_list","select_item","view_item","add_to_wishlist",
-      "add_to_cart","view_cart","begin_checkout","add_shipping_info","add_payment_info",
-    ] },
-  { id: "purchase_core", label: "구매 퍼널 핵심",
-    desc: "상세→장바구니→결제 시작",
-    events: ["view_item","add_to_cart","begin_checkout"] },
-  { id: "browse_only", label: "조회만",
-    desc: "페이지 조회 · 목록 · 상세",
-    events: ["page_view","view_item_list","view_item"] },
-  { id: "wishlist_plus", label: "관심상품 포함",
-    desc: "조회 + 찜 + 담기",
-    events: ["view_item","add_to_wishlist","add_to_cart"] },
-];
-
-function EventPicker({ value, onChange }) {
-  const set = useMemo(() => new Set((value || []).map(v => v.toLowerCase())), [value]);
-  const [custom, setCustom] = useState("");
-
-  const toggle = (name) => {
-    const n = name.toLowerCase();
-    const next = new Set(set);
-    if (next.has(n)) next.delete(n); else next.add(n);
-    onChange && onChange(Array.from(next));
-  };
-  const applyPreset = (events) => {
-    onChange && onChange(Array.from(new Set(events.map(e => e.toLowerCase()))));
-  };
-  const clearAll = () => onChange && onChange([]);
-  const addCustom = () => {
-    const parts = custom.split(/[\s,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
-    if (!parts.length) return;
-    const next = new Set(set);
-    parts.forEach(p => { if (/^[a-z][a-z0-9_]*$/.test(p)) next.add(p); });
-    onChange && onChange(Array.from(next));
-    setCustom("");
-  };
-  const removeCustom = (name) => {
-    const next = new Set(set);
-    next.delete(name);
-    onChange && onChange(Array.from(next));
-  };
-
-  const catalogNames = new Set([...GA4_EVENT_CATALOG, ...GA4_MANUAL_ONLY].map(e => e.name));
-  const customSelected = Array.from(set).filter(n => !catalogNames.has(n));
-
-  const Row = ({ ev, manual }) => {
-    const on = set.has(ev.name);
-    return (
-      <label className={`ev-row${on ? " on" : ""}${manual ? " manual" : ""}`}
-             onClick={() => toggle(ev.name)}>
-        <span className={`ev-check${on ? " on" : ""}`} aria-hidden>
-          {on ? <Icon name="check" size={12} /> : null}
-        </span>
-        <span className="ev-name mono">{ev.name}</span>
-        <span className="ev-label">{ev.label}</span>
-        <span className="ev-hint">{ev.hint}</span>
-        {manual ? <span className="chip warn" style={{ marginLeft: "auto" }}>Manual</span> : null}
-      </label>
-    );
-  };
-
-  return (
-    <div className="ev-picker">
-      <div className="ev-preset-row">
-        <span className="muted-mono" style={{ fontSize: 11.5 }}>프리셋</span>
-        {EVENT_PRESETS.map(p => (
-          <button key={p.id} className="btn ghost sm" title={p.desc}
-                  onClick={() => applyPreset(p.events)}>
-            {p.label}
-          </button>
-        ))}
-        <button className="btn ghost sm" onClick={clearAll}>모두 해제</button>
-        <span style={{ marginLeft: "auto" }} className="chip accent">
-          <span className="mini-dot" />{set.size}개 선택
-        </span>
-      </div>
-
-      <div className="ev-grid">
-        {GA4_EVENT_CATALOG.map(ev => <Row key={ev.name} ev={ev} />)}
-      </div>
-
-      <div className="ev-section-label">Manual 전용 (체크 시 `manual_required`로 이관)</div>
-      <div className="ev-grid">
-        {GA4_MANUAL_ONLY.map(ev => <Row key={ev.name} ev={ev} manual />)}
-      </div>
-
-      <div className="ev-section-label">커스텀 이벤트</div>
-      <div className="ev-custom-row">
-        <input className="input mono" placeholder="예: add2cart, user_signup (쉼표·스페이스 구분)"
-               value={custom} onChange={e => setCustom(e.target.value)}
-               onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }} />
-        <button className="btn" onClick={addCustom}>추가</button>
-      </div>
-      {customSelected.length > 0 ? (
-        <div className="row tight" style={{ flexWrap: "wrap", marginTop: 6, gap: 6 }}>
-          {customSelected.map(n => (
-            <span key={n} className="chip accent" style={{ cursor: "pointer" }}
-                  onClick={() => removeCustom(n)} title="클릭하여 제거">
-              <span className="mono">{n}</span>
-              <Icon name="x" size={10} />
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="muted-mono" style={{ fontSize: 11.5, marginTop: 10 }}>
-        선택된 이벤트만 탐색·설계 대상이 됩니다. 아무것도 선택하지 않으면
-        요청 문장에 적힌 내용으로 자동 해석합니다.
-      </div>
-    </div>
-  );
-}
-
-Object.assign(window, {
-  Icon, Sidebar, Topbar, Timeline, Thoughts, Json, Markdown,
-  EventPicker, GA4_EVENT_CATALOG, GA4_MANUAL_ONLY, EVENT_PRESETS,
-});
+Object.assign(window, { Icon, Sidebar, Topbar, Timeline, Thoughts, Json, Markdown });

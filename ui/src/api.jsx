@@ -16,6 +16,7 @@ window.useRunLog = function useRunLog(runId) {
   const [events, setEvents] = React.useState([]);   // datalayer_event 목록
   const [thoughts, setThoughts] = React.useState([]);
   const [plan, setPlan] = React.useState(null);
+  const [planMeta, setPlanMeta] = React.useState({ normalize_errors: [], canplan_hash: "" });
   const [workspaceAsk, setWorkspaceAsk] = React.useState(null); // {kind:"workspace_full", workspaces, current_count, limit, default_reuse_id, message}
   const [publishResult, setPublishResult] = React.useState(null);
   const offsetRef = React.useRef(0);
@@ -31,6 +32,7 @@ window.useRunLog = function useRunLog(runId) {
     setEvents([]);
     setThoughts([]);
     setPlan(null);
+    setPlanMeta({ normalize_errors: [], canplan_hash: "" });
     setWorkspaceAsk(null);
     setPublishResult(null);
     setState({ nodes: [], status: "loading" });
@@ -85,6 +87,10 @@ window.useRunLog = function useRunLog(runId) {
                 });
               } else {
                 setPlan(ev.plan);
+                setPlanMeta({
+                  normalize_errors: ev.normalize_errors || [],
+                  canplan_hash: ev.canplan_hash || (ev.plan && ev.plan.canplan_hash) || "",
+                });
               }
             } else if (ev.type === "hitl_decision") {
               // 결정이 내려지면 workspace_full 카드는 닫는다
@@ -107,7 +113,7 @@ window.useRunLog = function useRunLog(runId) {
     return () => { alive = false; };
   }, [runId]);
 
-  return { state, events, thoughts, plan, workspaceAsk, publishResult };
+  return { state, events, thoughts, plan, planMeta, workspaceAsk, publishResult };
 };
 
 window.useHistory = function useHistory() {

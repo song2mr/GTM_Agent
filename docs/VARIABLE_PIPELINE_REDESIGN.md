@@ -840,15 +840,35 @@ LLM이 자바스크립트 본문을 쓰게 두지 않는다. 대신 **검증된 
 
 - [x] `agent/canplan/schema.py` 추가 (`canplan/1`, 정규화 이슈 구조)
 - [x] `agent/canplan/normalize.py` 추가 (Draft/legacy -> CanPlan, 참조 검증)
+  - [x] §4.5.1 `DL_HEALTH_IGNORED` — healthy DL 필드를 하위 소스로 대체 시 거부
+  - [x] §4.5.3 로드형 이벤트 + url_patterns 존재 + DL 미발화 → pageview 폴백 요구
+  - [x] §5.3 `in_set` op 금지 규칙 (legacy/CanPlan 양쪽에서 거부)
+  - [x] §8 등록되지 않은 CJS template_id 거부 (`TEMPLATE_UNKNOWN`)
 - [x] `agent/canplan/evidence.py` 추가 (EvidencePack 합성)
-- [x] `agent/canplan/cjs_templates.py` 추가 (템플릿 레지스트리 기본형)
+  - [x] §4.5.2 DL 건전성(`healthy/unhealthy/unknown`) 필드별 태깅
+  - [x] observed `site_url_patterns` > seed 병합 + `url_pattern_sources` 제공
+  - [x] `events[i].failures` 에 `exploration_failures` 반영
+- [x] `agent/canplan/cjs_templates.py` 확장 — 등록 템플릿:
+  `attr_from_selector`, `text_to_number`, `json_ld_value`,
+  `items_from_jsonld`, `items_from_dom`, `build_single_item`,
+  `meta_tag_value`, `cookie_value`
 - [x] `gtm/spec_builder.py` 추가 (CanPlan -> GTM models 변환)
+  - [x] 골든 테스트 `test_build_specs_from_canplan_minimal`, `…page_path_regex_trigger`, `…click_trigger`
 - [x] `planning.py`에 `draft_plan`, `canplan`, `normalize_errors`, `canplan_hash` 경로 연결
+  - [x] 재설계 루프에서 이전 CanPlan + normalize_errors 요약을 LLM 프롬프트에 재주입
 - [x] `gtm_creation.py`에 CanPlan 우선 경로 연결, `STRICT_CANPLAN` 차단 분기 추가
-- [x] `state.py`/`runner.py`에 신규 상태 필드 추가
-- [x] `agent/playbooks/ga4_ecommerce.yaml`, `agent/playbooks/loader.py` 추가
+  - [x] 레거시 경로 진입 시 경고 배너/로그 + `in_set` 사용 차단
+- [x] `state.py`/`runner.py`에 신규 상태 필드 추가 (`exploration_failures` 포함)
+- [x] `agent/playbooks/ga4_ecommerce.yaml` — `entry_hints`, `observation(required/optional/settle_ms)`, `trigger_fallbacks` 12개 이벤트 확장
+- [x] `agent/playbooks/loader.py` — 미등록 이벤트용 기본 Playbook(fallback) + `playbook_for_event`
 - [x] `journey_planner.py`에서 `exploration_plan` 저장
-- [ ] Structure Analyzer의 `datalayer_status=full` 얕은 수집 모드
-- [ ] Explorer/Navigator의 Playbook `surface_goal` 본격 소비
-- [ ] `logs/<run>/canplan.json`, `plan_vs_canplan.diff.json` 자동 덤프
+- [x] Structure Analyzer의 `datalayer_status=full` 얕은 수집 모드
+- [x] Explorer/Navigator의 Playbook `surface_goal` 본격 소비
+  - [x] `captured_events[i].evidence` 고정 포맷(`url/path/datalayer/dom/json_ld/failures`) 부착
+  - [x] `exploration_failures`에 `surface_unreached` 기록
+  - [x] 방문 URL 기반 `site_url_patterns`(observed) 누적
+  - [x] Navigator snapshot chunking — 초기 스냅샷 빈약 시 ¼ 스크롤 후 재시도(최대 2회)
+- [x] `logs/<run>/canplan.json`, `plan_vs_canplan.diff.json`, `normalize_errors.json` 자동 덤프
+- [x] UI HitlScreen — `canplan_hash` 단축 표시 + `normalize_errors` 카드 (severity/code/message/hint)
+- [x] 테스트: `tests/test_canplan_normalize.py` — DL_health/DL_HEALTH_IGNORED/in_set/TEMPLATE_UNKNOWN/loadtime-pageview/negative-sample 6종
                            

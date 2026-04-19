@@ -14,6 +14,8 @@ from agent.commerce_events import (
     fallback_begin_checkout_events,
     fallback_cart_addition_events,
 )
+from agent.playbooks.loader import build_exploration_plan
+from agent.request_events import resolve_selected_events
 from agent.state import GTMAgentState
 from config.llm_models_loader import llm_model
 from utils import logger, token_tracker
@@ -34,8 +36,8 @@ _EXCLUDE_QUEUE_REASONS: dict[str, str] = {
 # 부분 자동화 (더미 데이터 폼 입력)
 PARTIAL_AUTO_EVENTS = {"add_shipping_info", "add_payment_info"}
 
-# GA4 이커머스 “설치형” 이벤트의 권장 **상대 순서** (숫자 작을수록 먼저).
-# 큐에 없는 이름은 건너뛰고, **여기 없는 커스텀 이벤트**는 rank 1000 + LLM이 준 순서 유지.
+# GA4 이커머스 이벤트의 **상대 순서(정렬용)** — 숫자 작을수록 탐색 큐에서 먼저.
+# 요청에 없는 이름을 큐에 넣는 근거로 쓰지 않는다. **여기 없는 커스텀**은 rank 1000 + 입력 순서.
 _EXPLORATION_RANK: dict[str, int] = {
     "page_view": 0,
     "view_promotion": 5,
@@ -105,36 +107,27 @@ _PLANNER_SYSTEM = """당신은 GTM 이벤트 탐색 전략가입니다.
 - **반드시 `exploration_queue`에 등장한 문자열과 동일한 이름**만 사용한다.
 - 사용자 요청·태그 유형을 읽고 의미상 결제 진입에 해당하는 이벤트명을 고른다. 없으면 **[]**.
 
-== GA4 표준 이벤트 ==
-- page_view: 모든 페이지 로드 시
-- view_item_list: 카테고리/목록 페이지(PLP)
-- view_item: 상품 상세 페이지(PDP) — 홈/목록에서 상품 클릭 후 발화
-- add_to_cart: PDP에서 장바구니 버튼 클릭
-- remove_from_cart: 장바구니 페이지
-- view_cart: 장바구니 페이지
-- begin_checkout: 결제 시작
-- add_shipping_info, add_payment_info: 결제 단계
+== GA4 표준 이름 (참고 사전일 뿐) ==
+이름 예: page_view, view_item_list, view_item, add_to_cart, view_cart, begin_checkout,
+add_shipping_info, add_payment_info, add_to_wishlist 등.
+**이 사전을 이유로 exploration_queue를 채우지 마세요.** 큐에는 사용자 요청에 **실제로 적힌** 이벤트만 넣습니다.
+
 - **purchase**, **refund**: **exploration_queue에 넣지 마세요.** (서버가 넣어도 제거. 자동 탐색 미지원, Manual/설계만)
 
-== 커스텀/비표준 이벤트 처리 ==
-사용자 요청에 아래 이벤트가 포함되면 exploration_queue에 추가하세요:
-- add_to_wishlist: 상품 찜하기/위시리스트 버튼 클릭 이벤트
-  (한국 쇼핑몰: ♡ 하트, '찜', '찜하기', '관심상품' 버튼)
-  → PLP 상품 카드의 찜 버튼 또는 PDP의 찜 버튼에서 캡처 가능
-  → purchase·refund 제외, auto_capturable로 분류
-- select_item: PLP에서 상품 클릭
-- 기타 사용자 요청에 명시된 이벤트명: auto_capturable로 처리
+== 최우선: 요청에 없는 이벤트는 큐에 넣지 않음 ==
+- 표준 이커머스 퍼널을 “완성”하려고 page_view·view_cart 등을 **임의로 추가하지 마세요.**
+- 커스텀 이름도 **사용자가 요청에 적었을 때만** 큐에 넣습니다.
 
-== 탐색 순서 원칙 (고정 설치 시 권장 순서) ==
-서버가 큐를 **표준 순서로 다시 정렬**한다. LLM은 아래 의도에 맞게 나열하면 된다.
+== 순서 가이드 (정렬용 — 새 이벤트 추가 금지) ==
+서버는 큐를 **상대 순위**로 다시 정렬한다. 이 순서는
+“**이미 exploration_queue에 넣은 항목들**”의 탐색 순서만 위한 것이며,
+**표준 퍼널을 채우라는 뜻이 아니다.**
 
-1. `page_view` 항상 첫째.
-2. 목록·진입: `view_promotion`(있으면) → `view_item_list` → `select_item`(PLP에서 PDP로) → `view_item`.
-3. **핵심 PDP 이후**: `view_item` → `add_to_cart` → (장바구니 측정이면) `view_cart` → **`begin_checkout`**.
-   즉 **view_item → add_to_cart → begin_checkout** 상대 순서를 지키고, 그 사이에 `view_cart`가 있으면 `begin_checkout` 앞에 둔다.
-4. `add_to_wishlist`는 보통 `view_item`과 `add_to_cart` 사이·인접(같은 PDP).
-5. 결제 단계: `begin_checkout` 다음 `add_shipping_info` → `add_payment_info`.
-6. **purchase·refund는 절대 `exploration_queue`에 넣지 마세요** (서버가 넣어도 둘 다 제거).
+큐에 해당 이름이 있을 때의 권장 상대 순서:
+view_promotion → view_item_list → select_item → view_item → add_to_wishlist
+→ add_to_cart → view_cart → begin_checkout → add_shipping_info → add_payment_info
+
+- **purchase·refund**는 절대 `exploration_queue`에 넣지 마세요 (서버가 넣어도 제거).
 
 == 탐색 전용 노드 ==
 - `cart_addition_events` → Node 3.25 (옵션·담기 UI)
@@ -154,59 +147,76 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
     tag_type = state.get("tag_type", "GA4")
     current_url = state.get("target_url", "")
 
-    messages = [
-        SystemMessage(content=_PLANNER_SYSTEM),
-        HumanMessage(
-            content=(
-                f"페이지 타입: {page_type}\n"
-                f"현재 URL: {current_url}\n"
-                f"사용자 요청: {user_request}\n"
-                f"태그 유형: {tag_type}\n\n"
-                "JSON에 cart_addition_events, begin_checkout_events를 반드시 포함하세요(해당 없으면 []). "
-                "각 배열의 이름은 exploration_queue에 나온 문자열과 **완전히 동일**해야 합니다.\n\n"
-                "서버가 exploration_queue를 **표준 이커머스 순으로 정렬**하고 purchase·refund는 제거합니다. "
-                "view_item → add_to_cart → (view_cart) → begin_checkout 의존 순서를 지키세요."
-            )
-        ),
-    ]
-    llm = make_chat_llm(model=llm_model("journey_planner"))
-    t_llm = time.perf_counter()
-    try:
-        response = await llm.ainvoke(messages)
-        token_tracker.track("journey_planner", response)
-        raw = response.content or ""
+    explicit_events = resolve_selected_events(state)
+    queue_notes: list[str] = []
+    planner_cart: object = None
+    planner_begin: object = None
+    raw = ""
+
+    if explicit_events is not None:
+        source = "UI 선택(selected_events)" if state.get("selected_events") else "요청 괄호 목록"
+        queue, queue_notes = _normalize_and_sort_exploration_queue(explicit_events)
+        queue_notes.insert(
+            0,
+            f"명시 이벤트만 탐색 대상({source}) — 표준 퍼널 자동 추가 없음, 순위표는 정렬용.",
+        )
         logger.info(
-            f"[JourneyPlanner] LLM 완료 wall_s={time.perf_counter() - t_llm:.2f} "
-            f"reply_chars={len(raw)}"
+            f"[JourneyPlanner] 명시 목록 기반 탐색 큐(LLM 스킵, {source}): {queue}"
         )
-    except Exception as e:
-        # 네트워크·API 키·rate limit·타임아웃 등 — 파이프라인을 죽이지 않고 기본 큐로 진행
-        logger.error(
-            f"[JourneyPlanner] LLM 호출 실패 wall_s={time.perf_counter() - t_llm:.2f} "
-            f"→ 기본 큐 폴백: {e}"
-        )
-        emit(
-            "thought", who="agent", label="JourneyPlanner",
-            text=f"LLM 호출 실패 → 기본 큐로 진행: {e}",
-        )
-        raw = ""
-
-    result = parse_llm_json(raw, fallback={}) if raw else {}
-    if isinstance(result, dict) and result:
-        queue: list[str] = result.get("exploration_queue", []) or []
-        planner_cart: object = result.get("cart_addition_events", None)
-        planner_begin: object = result.get("begin_checkout_events", None)
     else:
-        # 파싱 실패 또는 LLM 실패: 페이지 타입 기반 기본 큐 사용
-        if raw:
-            logger.warning(
-                f"[JourneyPlanner] JSON 파싱 실패, 기본 큐 사용 (raw[:200]={raw[:200]!r})"
+        messages = [
+            SystemMessage(content=_PLANNER_SYSTEM),
+            HumanMessage(
+                content=(
+                    f"페이지 타입: {page_type}\n"
+                    f"현재 URL: {current_url}\n"
+                    f"사용자 요청: {user_request}\n"
+                    f"태그 유형: {tag_type}\n\n"
+                    "JSON에 cart_addition_events, begin_checkout_events를 반드시 포함하세요(해당 없으면 []). "
+                    "각 배열의 이름은 exploration_queue에 나온 문자열과 **완전히 동일**해야 합니다.\n\n"
+                    "서버가 exploration_queue를 **요청에 실제로 나온 항목만** 남기고 표준 상대 순으로 정렬하며, "
+                    "purchase·refund는 제거합니다. **요청에 없는 page_view 등은 exploration_queue에 넣지 마세요.**"
+                )
+            ),
+        ]
+        llm = make_chat_llm(model=llm_model("journey_planner"))
+        t_llm = time.perf_counter()
+        try:
+            response = await llm.ainvoke(messages)
+            token_tracker.track("journey_planner", response)
+            raw = response.content or ""
+            logger.info(
+                f"[JourneyPlanner] LLM 완료 wall_s={time.perf_counter() - t_llm:.2f} "
+                f"reply_chars={len(raw)}"
             )
-        planner_cart = None
-        planner_begin = None
-        queue = _default_queue(page_type, user_request)
+        except Exception as e:
+            # 네트워크·API 키·rate limit·타임아웃 등 — 파이프라인을 죽이지 않고 기본 큐로 진행
+            logger.error(
+                f"[JourneyPlanner] LLM 호출 실패 wall_s={time.perf_counter() - t_llm:.2f} "
+                f"→ 기본 큐 폴백: {e}"
+            )
+            emit(
+                "thought", who="agent", label="JourneyPlanner",
+                text=f"LLM 호출 실패 → 기본 큐로 진행: {e}",
+            )
+            raw = ""
 
-    queue, queue_notes = _normalize_and_sort_exploration_queue(queue)
+        result = parse_llm_json(raw, fallback={}) if raw else {}
+        if isinstance(result, dict) and result:
+            queue = result.get("exploration_queue", []) or []
+            planner_cart = result.get("cart_addition_events", None)
+            planner_begin = result.get("begin_checkout_events", None)
+        else:
+            # 파싱 실패 또는 LLM 실패: 페이지 타입 기반 기본 큐 사용
+            if raw:
+                logger.warning(
+                    f"[JourneyPlanner] JSON 파싱 실패, 기본 큐 사용 (raw[:200]={raw[:200]!r})"
+                )
+            planner_cart = None
+            planner_begin = None
+            queue = _default_queue(page_type, user_request)
+
+        queue, queue_notes = _normalize_and_sort_exploration_queue(queue)
 
     # purchase/refund만 manual_required — 나머지는 모두 auto_capturable
     # (add_to_wishlist 등 커스텀 이벤트 포함)
@@ -259,9 +269,12 @@ async def journey_planner(state: GTMAgentState) -> GTMAgentState:
     emit("node_exit", node_id=2, status="done", duration_ms=_dur)
     update_state(nodes_status={"journey_planner": "done"})
 
+    exploration_plan = build_exploration_plan(queue)
+
     return {
         **state,
         "exploration_queue": queue,
+        "exploration_plan": exploration_plan,
         "auto_capturable": auto_capturable,
         "cart_addition_events": cart_addition_events,
         "begin_checkout_events": begin_checkout_events,

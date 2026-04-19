@@ -30,13 +30,17 @@ from utils.ui_emitter import (
 async def run_agent(config: dict) -> dict:
     """
     config 키:
-        target_url      str   (필수)
-        user_request    str   (필수)
-        tag_type        str   "GA4"|"naver"|"kakao"  (기본 GA4)
-        account_id      str   (필수)
-        container_id    str   (필수)
-        workspace_id    str   (선택, 비면 자동 생성)
-        measurement_id  str   (선택, G-XXXXXXXX)
+        target_url       str         (필수)
+        user_request     str         (필수, 자연어 메모)
+        tag_type         str         "GA4"|"naver"|"kakao"  (기본 GA4)
+        account_id       str         (필수)
+        container_id     str         (필수)
+        workspace_id     str         (선택, 비면 자동 생성)
+        measurement_id   str         (선택, G-XXXXXXXX)
+        selected_events  list[str]   (선택) UI 체크박스 등에서 명시한 GA4
+                                        이벤트명 목록. 있으면 Journey Planner·
+                                        Planning이 **이 목록만** 탐색·설계 대상으로
+                                        사용한다. 없으면 자연어(괄호 파서)로 폴백.
 
     반환: final_state dict
     """
@@ -47,6 +51,20 @@ async def run_agent(config: dict) -> dict:
     container_id = config["container_id"]
     workspace_id = config.get("workspace_id", "")
     measurement_id = config.get("measurement_id", "")
+    # UI/CLI에서 사용자가 명시적으로 선택한 이벤트(체크박스 등)
+    # 공백/대소문자 정규화 + 순서 유지 중복 제거.
+    _raw_selected = config.get("selected_events") or []
+    if isinstance(_raw_selected, str):
+        _raw_selected = [_raw_selected]
+    _seen: set[str] = set()
+    selected_events: list[str] = []
+    for _name in _raw_selected:
+        if not isinstance(_name, str):
+            continue
+        _n = _name.strip().lower()
+        if _n and _n not in _seen:
+            _seen.add(_n)
+            selected_events.append(_n)
 
     run_id_override = config.get("run_id")
     hitl_mode = config.get("hitl_mode", "cli")
@@ -260,6 +278,7 @@ async def run_agent(config: dict) -> dict:
         "container_id": container_id,
         "workspace_id": workspace_id,
         "measurement_id": measurement_id,
+        "selected_events": selected_events,
         # 나머지 초기화
         "page_type": "",
         "existing_gtm_config": {},
@@ -270,6 +289,8 @@ async def run_agent(config: dict) -> dict:
         "selector_validation": {},
         "json_ld_data": {},
         "click_triggers": {},
+        "site_url_patterns": {},
+        "site_spa": False,
         "exploration_queue": [],
         "auto_capturable": [],
         "cart_addition_events": [],
@@ -279,11 +300,18 @@ async def run_agent(config: dict) -> dict:
         "exploration_log": [],
         "current_url": "",
         "last_pdp_url": "",
+        "exploration_failures": [],
         "manual_capture_results": {},
         "skipped_events": [],
         "doc_context": "",
         "doc_fetch_failed": False,
         "plan": {},
+        "draft_plan": {},
+        "canplan": {},
+        "evidence_pack": {},
+        "normalize_errors": [],
+        "canplan_hash": "",
+        "exploration_plan": [],
         "plan_approved": False,
         "hitl_feedback": "",
         "created_variables": [],

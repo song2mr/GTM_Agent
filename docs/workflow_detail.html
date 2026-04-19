@@ -1,0 +1,1407 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GTM AI Agent — 실행 워크플로우 상세 분석</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --blue: #58a6ff;
+      --green: #3fb950;
+      --orange: #d29922;
+      --purple: #bc8cff;
+      --red: #f85149;
+      --teal: #39d353;
+      --cyan: #76e3ea;
+      --yellow: #e3b341;
+      --pink: #f778ba;
+      --node-blue: #1f6feb;
+      --node-green: #238636;
+      --node-orange: #9e6a03;
+      --node-purple: #6e40c9;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* ── Layout ── */
+    .wrapper { max-width: 1280px; margin: 0 auto; padding: 40px 24px 80px; }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--blue);
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 8px;
+    }
+    .subtitle { color: var(--text-muted); margin-bottom: 40px; font-size: 13px; }
+
+    h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+      margin: 48px 0 16px;
+      padding-left: 12px;
+      border-left: 4px solid var(--blue);
+    }
+    h3 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--cyan);
+      margin: 24px 0 10px;
+    }
+    h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--yellow);
+      margin: 16px 0 8px;
+    }
+
+    p { color: var(--text-muted); margin-bottom: 10px; }
+    strong { color: var(--text); }
+
+    /* ── Pipeline ── */
+    .pipeline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0;
+      align-items: center;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 40px;
+      overflow-x: auto;
+    }
+    .pipe-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 90px;
+    }
+    .pipe-badge {
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+      border: 2px solid transparent;
+    }
+    .pipe-label { font-size: 10px; text-align: center; color: var(--text-muted); max-width: 80px; }
+    .pipe-arrow { color: var(--text-muted); font-size: 20px; padding: 0 2px; align-self: center; margin-top: -18px; }
+    .pipe-cond { font-size: 9px; color: var(--orange); text-align: center; margin-top: -4px; }
+
+    .n1  { background: #1f3a5f; border-color: var(--blue); color: var(--blue); }
+    .n15 { background: #2d2a1a; border-color: var(--yellow); color: var(--yellow); }
+    .n2  { background: #1a2d1a; border-color: var(--green); color: var(--green); }
+    .n3  { background: #2d1a2d; border-color: var(--purple); color: var(--purple); }
+    .n4  { background: #2d1a1a; border-color: var(--red); color: var(--red); }
+    .n5  { background: #1a2d2d; border-color: var(--cyan); color: var(--cyan); }
+    .n6  { background: #1a1f2d; border-color: var(--pink); color: var(--pink); }
+    .n7  { background: #1a2d1e; border-color: var(--teal); color: var(--teal); }
+    .n8  { background: #2d2d1a; border-color: var(--orange); color: var(--orange); }
+
+    /* ── Section Card ── */
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .node-num {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+    .card-title { font-size: 16px; font-weight: 700; color: var(--text); }
+
+    /* ── IO Tables ── */
+    .io-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 12px 0;
+    }
+    @media (max-width: 700px) { .io-grid { grid-template-columns: 1fr; } }
+
+    .io-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .io-box-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+    .io-in  { color: var(--green); }
+    .io-out { color: var(--orange); }
+
+    .field-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .field-name {
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      color: var(--cyan);
+      background: rgba(118,227,234,0.08);
+      padding: 1px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .field-type {
+      font-size: 10px;
+      color: var(--purple);
+      background: rgba(188,140,255,0.08);
+      padding: 1px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .field-desc { font-size: 12px; color: var(--text-muted); }
+
+    /* ── Flow Steps ── */
+    .steps { counter-reset: step; }
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .step-num {
+      width: 28px; height: 28px;
+      min-width: 28px;
+      border-radius: 50%;
+      background: var(--node-blue);
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .step-content { flex: 1; }
+    .step-title { font-weight: 600; color: var(--text); font-size: 13px; margin-bottom: 4px; }
+    .step-desc { font-size: 12px; color: var(--text-muted); }
+
+    /* ── Code Block ── */
+    pre {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--text);
+      margin: 12px 0;
+    }
+    .kw { color: var(--purple); }
+    .str { color: var(--green); }
+    .key { color: var(--cyan); }
+    .val { color: var(--orange); }
+    .cmt { color: var(--text-muted); font-style: italic; }
+    .fn  { color: var(--yellow); }
+
+    /* ── Variable Reference ── */
+    .var-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin: 12px 0;
+    }
+    .var-table th {
+      background: var(--bg3);
+      color: var(--text-muted);
+      padding: 8px 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+      font-size: 11px;
+    }
+    .var-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .var-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+    /* ── Badge Pills ── */
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      margin: 2px;
+    }
+    .badge-blue   { background: rgba(88,166,255,0.15); color: var(--blue); border: 1px solid rgba(88,166,255,0.3); }
+    .badge-green  { background: rgba(63,185,80,0.15);  color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+    .badge-orange { background: rgba(210,153,34,0.15); color: var(--yellow); border: 1px solid rgba(210,153,34,0.3); }
+    .badge-purple { background: rgba(188,140,255,0.15);color: var(--purple);border: 1px solid rgba(188,140,255,0.3); }
+    .badge-red    { background: rgba(248,81,73,0.15);  color: var(--red);  border: 1px solid rgba(248,81,73,0.3); }
+    .badge-cyan   { background: rgba(118,227,234,0.15);color: var(--cyan); border: 1px solid rgba(118,227,234,0.3); }
+    .badge-pink   { background: rgba(247,120,186,0.15);color: var(--pink); border: 1px solid rgba(247,120,186,0.3); }
+
+    /* ── Decision Flow ── */
+    .decision-box {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      margin: 10px 0;
+    }
+    .decision-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--yellow);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .decision-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .decision-cond { color: var(--orange); font-weight: 600; min-width: 180px; }
+    .decision-result { color: var(--text-muted); }
+
+    /* ── GTM Resource Schema ── */
+    .resource-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 16px 0;
+    }
+    @media (max-width: 900px) { .resource-grid { grid-template-columns: 1fr; } }
+
+    .resource-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .resource-card-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .rc-var  { color: var(--cyan); }
+    .rc-trig { color: var(--orange); }
+    .rc-tag  { color: var(--pink); }
+
+    /* ── Callout ── */
+    .callout {
+      border-left: 4px solid var(--orange);
+      background: rgba(210,153,34,0.05);
+      padding: 12px 16px;
+      border-radius: 0 8px 8px 0;
+      margin: 12px 0;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .callout strong { color: var(--yellow); }
+
+    .callout-blue {
+      border-color: var(--blue);
+      background: rgba(88,166,255,0.05);
+    }
+    .callout-blue strong { color: var(--blue); }
+
+    .callout-green {
+      border-color: var(--green);
+      background: rgba(63,185,80,0.05);
+    }
+    .callout-green strong { color: var(--green); }
+
+    /* ── Source Decision Tree ── */
+    .tree-box {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 2;
+    }
+    .tree-root { color: var(--blue); }
+    .tree-cond { color: var(--yellow); }
+    .tree-result-dl { color: var(--green); }
+    .tree-result-dom { color: var(--orange); }
+    .tree-branch { color: var(--text-muted); }
+
+    /* ── Sticky TOC ── */
+    .toc {
+      position: sticky;
+      top: 20px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      font-size: 12px;
+    }
+    .toc-title { font-weight: 700; color: var(--text); margin-bottom: 10px; }
+    .toc a { color: var(--text-muted); text-decoration: none; display: block; padding: 3px 0; }
+    .toc a:hover { color: var(--blue); }
+
+    /* ── Two-col Layout ── */
+    .main-layout { display: grid; grid-template-columns: 1fr 220px; gap: 32px; }
+    .main-content {}
+    @media (max-width: 1000px) {
+      .main-layout { grid-template-columns: 1fr; }
+      .toc { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrapper">
+
+  <h1>GTM AI Agent — 실행 워크플로우 상세 분석</h1>
+  <p class="subtitle">Node 1~8 전체 흐름 · 이벤트 설계 방식 · GTM API 호출 구조 · 변수 입출력 완전 해설</p>
+
+  <!-- ══════════════════════════ PIPELINE ══════════════════════════ -->
+  <div class="pipeline">
+    <div class="pipe-node">
+      <div class="pipe-badge n1">N1</div>
+      <div class="pipe-label">Page<br>Classifier</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;align-self:center;margin-top:-20px">
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-cond">full?</div>
+    </div>
+    <div class="pipe-node">
+      <div class="pipe-badge n15">N1.5</div>
+      <div class="pipe-label">Structure<br>Analyzer</div>
+      <div class="pipe-cond">(조건부)</div>
+    </div>
+    <div class="pipe-arrow" style="align-self:center;margin-top:-10px">→</div>
+    <div class="pipe-node">
+      <div class="pipe-badge n2">N2</div>
+      <div class="pipe-label">Journey<br>Planner</div>
+    </div>
+    <div class="pipe-arrow" style="align-self:center;margin-top:-10px">→</div>
+    <div class="pipe-node">
+      <div class="pipe-badge n3">N3</div>
+      <div class="pipe-label">Active<br>Explorer</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;align-self:center;margin-top:-20px">
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-cond">manual?</div>
+    </div>
+    <div class="pipe-node">
+      <div class="pipe-badge n4">N4</div>
+      <div class="pipe-label">Manual<br>Capture</div>
+      <div class="pipe-cond">(조건부)</div>
+    </div>
+    <div class="pipe-arrow" style="align-self:center;margin-top:-10px">→</div>
+    <div class="pipe-node">
+      <div class="pipe-badge n5">N5</div>
+      <div class="pipe-label">Planning<br>Agent</div>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;align-self:center;margin-top:-20px">
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-cond">승인?</div>
+    </div>
+    <div class="pipe-node">
+      <div class="pipe-badge n6">N6</div>
+      <div class="pipe-label">GTM<br>Creation</div>
+    </div>
+    <div class="pipe-arrow" style="align-self:center;margin-top:-10px">→</div>
+    <div class="pipe-node">
+      <div class="pipe-badge n7">N7</div>
+      <div class="pipe-label">Publish</div>
+    </div>
+    <div class="pipe-arrow" style="align-self:center;margin-top:-10px">→</div>
+    <div class="pipe-node">
+      <div class="pipe-badge n8">N8</div>
+      <div class="pipe-label">Reporter</div>
+    </div>
+  </div>
+
+  <div class="main-layout">
+  <div class="main-content">
+
+  <!-- ══════════════════════════ 실행 진입 ══════════════════════════ -->
+  <h2 id="entry">0. 실행 진입 — runner.run_agent(config)</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-blue">runner.py</span>
+      <span class="card-title">에이전트 시작 시 받는 변수 (config dict)</span>
+    </div>
+
+    <table class="var-table">
+      <thead>
+        <tr>
+          <th>변수명</th>
+          <th>타입</th>
+          <th>필수</th>
+          <th>설명</th>
+          <th>어디에 쓰이나</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="field-name">target_url</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-red">필수</span></td>
+          <td>이벤트를 캡처할 대상 웹사이트 URL</td>
+          <td>N1 Playwright 브라우저 진입, N3 탐색 시작점</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">user_request</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-red">필수</span></td>
+          <td>자유 텍스트 메모 (설치 의도 기술)</td>
+          <td>N2에서 LLM 큐 폴백 시 컨텍스트, N5 Planning 프롬프트</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">account_id</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-red">필수</span></td>
+          <td>GTM 계정 ID</td>
+          <td>N6 GTMClient 초기화, GTM API 경로 구성</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">container_id</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-red">필수</span></td>
+          <td>GTM 컨테이너 ID</td>
+          <td>N6 GTMClient 초기화, Workspace/Variable/Trigger/Tag 생성 경로</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">selected_events</span></td>
+          <td><span class="field-type">list[str]</span></td>
+          <td><span class="badge badge-green">선택</span></td>
+          <td>UI 체크박스에서 명시한 이벤트 목록</td>
+          <td>N2에서 LLM 생략하고 이 목록만 탐색 큐로 사용 (strict 모드)</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">tag_type</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-green">선택</span></td>
+          <td>"GA4" | "naver" | "kakao" (기본: GA4)</td>
+          <td>N5 Planning 프롬프트에서 태그 타입 결정</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">measurement_id</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-green">선택</span></td>
+          <td>GA4 측정 ID (G-XXXXXXXX)</td>
+          <td>N5가 Constant Variable로 설계안에 포함, N6에서 API로 생성</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">workspace_id</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-green">선택</span></td>
+          <td>기존 Workspace ID (비면 자동 생성)</td>
+          <td>N6에서 신규 생성 생략하고 이 ID에 직접 덮어쓰기</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">hitl_mode</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-green">선택</span></td>
+          <td>"cli" | "file" (기본: cli)</td>
+          <td>N5/N6 HITL 승인 방식 결정 (UI면 file, 터미널이면 cli)</td>
+        </tr>
+        <tr>
+          <td><span class="field-name">run_id</span></td>
+          <td><span class="field-type">str</span></td>
+          <td><span class="badge badge-green">선택</span></td>
+          <td>실행 고유 ID (serve_ui 주입)</td>
+          <td>logs/{run_id}/ 폴더 경로, hitl_response.json 위치 결정</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-blue">
+      <strong>Workspace 사전 HITL:</strong>
+      GTM 무료 계정은 Workspace를 최대 3개까지 허용합니다. runner가 LangGraph를 실행하기 <em>전</em>에 이미 3개면
+      사용자에게 재사용 여부를 확인하고 <code>workspace_id</code>를 초기 state에 주입합니다.
+      이렇게 하면 N6까지 모든 노드가 실행된 뒤에야 오류가 나는 낭비를 막습니다.
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ NODE 1 ══════════════════════════ -->
+  <h2 id="n1">1. Node 1 — Page Classifier</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-blue" style="background:rgba(31,111,235,0.2);border-color:#1f6feb;color:#58a6ff;">N1</span>
+      <span class="card-title">페이지 로드 · dataLayer Listener 주입 · 페이지 타입 분류</span>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <div class="step-title">Playwright 브라우저 실행</div>
+          <div class="step-desc"><code>target_url</code>로 Chromium 브라우저를 열고 페이지를 로드합니다. <code>GTM_AI_HEADLESS</code> 환경변수가 1이면 headless(창 없음), 기본은 headed(창 표시)로 실행됩니다.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <div class="step-title">Persistent Listener 주입 (<code>inject_listener</code>)</div>
+          <div class="step-desc"><code>page.add_init_script()</code>로 JavaScript를 주입합니다. 이 스크립트는 <code>window.dataLayer.push</code>를 후킹해서 모든 push 이벤트를 <code>window.__gtm_captured</code> 배열에 자동으로 누적합니다. 페이지를 이동해도 리스너가 유지됩니다.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <div class="step-title">초기 dataLayer 이벤트 수집</div>
+          <div class="step-desc"><code>window.__gtm_captured</code>를 읽어 페이지 로드 시점에 이미 발화된 이벤트(예: <code>page_view</code>, <code>view_item</code>)를 수집합니다. 각 이벤트는 <code>{data, timestamp, url}</code> 형태로 저장됩니다.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <div class="step-title">LLM으로 페이지 타입 분류</div>
+          <div class="step-desc">HTML 스냅샷을 LLM에 전달해 <code>page_type</code>을 판별합니다: <span class="badge badge-blue">PLP</span> <span class="badge badge-green">PDP</span> <span class="badge badge-orange">cart</span> <span class="badge badge-purple">checkout</span> <span class="badge badge-cyan">home</span> <span class="badge badge-red">unknown</span></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <div class="step-content">
+          <div class="step-title">dataLayer 상태 결정</div>
+          <div class="step-desc">수집 이벤트 수로 상태를 결정합니다: 3개 이상 → <span class="badge badge-green">full</span> (N1.5 생략), 1~2개 → <span class="badge badge-orange">partial</span>, 0개 → <span class="badge badge-red">none</span> (N1.5 실행)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title io-in">▼ 입력 변수</div>
+        <div class="field-row"><span class="field-name">target_url</span><span class="field-desc">접속할 URL</span></div>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title io-out">▲ 출력 변수</div>
+        <div class="field-row"><span class="field-name">page_type</span><span class="field-desc">PLP/PDP/cart/checkout/home/unknown</span></div>
+        <div class="field-row"><span class="field-name">datalayer_status</span><span class="field-desc">full / partial / none</span></div>
+        <div class="field-row"><span class="field-name">datalayer_events_found</span><span class="field-desc">발견된 이벤트명 목록</span></div>
+        <div class="field-row"><span class="field-name">current_url</span><span class="field-desc">브라우저 현재 URL</span></div>
+      </div>
+    </div>
+
+    <h4>Listener 주입 코드 구조</h4>
+    <pre><span class="cmt">// window.__gtm_captured에 모든 dataLayer.push 이벤트 누적</span>
+<span class="kw">const</span> _originalPush = window.dataLayer.push.<span class="fn">bind</span>(window.dataLayer);
+window.dataLayer.push = <span class="kw">function</span>() {
+  <span class="kw">for</span> (<span class="kw">var</span> i = <span class="val">0</span>; i &lt; arguments.length; i++) {
+    <span class="kw">var</span> item = arguments[i];
+    window.__gtm_captured.<span class="fn">push</span>({
+      <span class="key">data</span>: JSON.<span class="fn">parse</span>(JSON.<span class="fn">stringify</span>(item)),  <span class="cmt">// 깊은 복사 (나중 변조 방지)</span>
+      <span class="key">timestamp</span>: Date.<span class="fn">now</span>(),
+      <span class="key">url</span>: window.location.href
+    });
+  }
+  <span class="kw">return</span> _originalPush.<span class="fn">apply</span>(window.dataLayer, arguments);
+};</pre>
+  </div>
+
+  <!-- ══════════════════════════ NODE 1.5 ══════════════════════════ -->
+  <h2 id="n15">2. Node 1.5 — Structure Analyzer (조건부)</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-orange">N1.5</span>
+      <span class="card-title">DOM/JSON-LD 구조 분석 — dataLayer가 불완전할 때만 실행</span>
+    </div>
+    <p><code>datalayer_status != "full"</code>일 때만 실행됩니다. CSS selector로 가격·상품명 등을 추출하고, 버튼 클릭 트리거를 사전에 탐색합니다.</p>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title io-in">▼ 입력 변수</div>
+        <div class="field-row"><span class="field-name">target_url</span></div>
+        <div class="field-row"><span class="field-name">page_type</span></div>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title io-out">▲ 출력 변수</div>
+        <div class="field-row"><span class="field-name">extraction_method</span><span class="field-desc">datalayer / dom / json_ld</span></div>
+        <div class="field-row"><span class="field-name">dom_selectors</span><span class="field-desc">{field: css_selector} 맵</span></div>
+        <div class="field-row"><span class="field-name">selector_validation</span><span class="field-desc">Playwright로 실제 검증된 값</span></div>
+        <div class="field-row"><span class="field-name">json_ld_data</span><span class="field-desc">JSON-LD 구조화 데이터</span></div>
+        <div class="field-row"><span class="field-name">click_triggers</span><span class="field-desc">{event_name: css_selector}</span></div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>click_triggers</strong>: 찜하기·장바구니 버튼의 CSS selector를 미리 파악해둡니다.
+      N3에서 이 selector로 클릭을 시도한 뒤 dataLayer 발화 여부를 확인하는 데 사용됩니다.
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ NODE 2 ══════════════════════════ -->
+  <h2 id="n2">3. Node 2 — Journey Planner</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-green">N2</span>
+      <span class="card-title">탐색 이벤트 큐 생성 + 자동/수동 캡처 분류</span>
+    </div>
+
+    <h3>이벤트 목록 결정 우선순위</h3>
+    <div class="decision-box">
+      <div class="decision-title">단일 진입점: resolve_selected_events()</div>
+      <div class="decision-row">
+        <span class="decision-cond">① selected_events 있음</span>
+        <span class="decision-result">→ 이 목록만 탐색 큐로 사용 (strict, LLM 호출 스킵)</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">② user_request에 ( ) 괄호 목록</span>
+        <span class="decision-result">→ 괄호 내 이벤트명 파싱해 사용 (LLM 호출 스킵)</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">③ 둘 다 없음</span>
+        <span class="decision-result">→ LLM에게 자유 텍스트 넘겨 큐 제안받음 (표준 퍼널 자동 확장 금지)</span>
+      </div>
+    </div>
+
+    <h3>이벤트 분류 규칙</h3>
+    <table class="var-table">
+      <thead>
+        <tr><th>이벤트 종류</th><th>배치</th><th>처리 노드</th><th>이유</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>view_item</code>, <code>view_cart</code> 등</td>
+          <td><span class="badge badge-green">exploration_queue + auto_capturable</span></td>
+          <td>N3 Active Explorer</td>
+          <td>Playwright로 탐색하면 자동 캡처 가능</td>
+        </tr>
+        <tr>
+          <td><code>add_to_cart</code> 계열</td>
+          <td><span class="badge badge-purple">cart_addition_events</span></td>
+          <td>N3.25 전용</td>
+          <td>옵션 선택 + 담기 시퀀스가 필요해 별도 처리</td>
+        </tr>
+        <tr>
+          <td><code>begin_checkout</code> 계열</td>
+          <td><span class="badge badge-cyan">begin_checkout_events</span></td>
+          <td>N3.5 전용</td>
+          <td>장바구니 → 결제 진입 시퀀스 별도 처리</td>
+        </tr>
+        <tr>
+          <td><code>purchase</code>, <code>refund</code></td>
+          <td><span class="badge badge-red">manual_required</span></td>
+          <td>N4 Manual Capture</td>
+          <td>실제 결제 없이 자동 캡처 불가</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title io-in">▼ 입력 변수</div>
+        <div class="field-row"><span class="field-name">selected_events</span></div>
+        <div class="field-row"><span class="field-name">user_request</span></div>
+        <div class="field-row"><span class="field-name">page_type</span></div>
+        <div class="field-row"><span class="field-name">datalayer_status</span></div>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title io-out">▲ 출력 변수</div>
+        <div class="field-row"><span class="field-name">exploration_queue</span><span class="field-desc">순서 있는 탐색 큐</span></div>
+        <div class="field-row"><span class="field-name">auto_capturable</span><span class="field-desc">자동 캡처 대상 목록</span></div>
+        <div class="field-row"><span class="field-name">cart_addition_events</span></div>
+        <div class="field-row"><span class="field-name">begin_checkout_events</span></div>
+        <div class="field-row"><span class="field-name">manual_required</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ NODE 3 ══════════════════════════ -->
+  <h2 id="n3">4. Node 3 — Active Explorer (핵심)</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-purple">N3</span>
+      <span class="card-title">LLM Navigator + Playwright로 이벤트 자동 캡처</span>
+    </div>
+
+    <h3>이벤트 캡처 우선순위 (반드시 이 순서)</h3>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num" style="background:#6e40c9">1</div>
+        <div class="step-content">
+          <div class="step-title">dataLayer 직접 캡처</div>
+          <div class="step-desc"><code>window.__gtm_captured</code>를 읽어 이미 발화된 이벤트 확인 (가장 신뢰할 수 있는 방법)</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:#6e40c9">2</div>
+        <div class="step-content">
+          <div class="step-title">click_triggers 클릭 → dataLayer 확인</div>
+          <div class="step-desc">N1.5가 찾아둔 CSS selector로 버튼 클릭 → <code>window.__gtm_captured</code> 발화 확인. 발화됐으면 <strong>source 없음</strong> (CE Trigger 대상)</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:#6e40c9">3</div>
+        <div class="step-content">
+          <div class="step-title">click_triggers 클릭 → DOM 추출</div>
+          <div class="step-desc">dataLayer 미발화 시 DOM에서 직접 값 추출. <strong><code>source = "dom_extraction"</code></strong> 으로 저장 (Click Trigger 대상)</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:#6e40c9">4</div>
+        <div class="step-content">
+          <div class="step-title">LLM Navigator 자동 탐색 (최대 6스텝)</div>
+          <div class="step-desc">LLM이 HTML 스냅샷을 보고 scroll / click / navigate / wait 액션을 결정. 이전 액션 히스토리를 보고 자율적으로 탐색합니다.</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:#6e40c9">5</div>
+        <div class="step-content">
+          <div class="step-title">DOM 폴백</div>
+          <div class="step-desc">Navigator 탐색 후에도 dataLayer 미발화면 <code>dom_selectors</code>로 DOM 값 직접 추출</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num" style="background:#f85149">6</div>
+        <div class="step-content">
+          <div class="step-title">실패 → manual_required로 이관</div>
+          <div class="step-desc">모든 시도 실패 시 해당 이벤트를 <code>manual_required</code>에 추가해 N4로 넘깁니다</div>
+        </div>
+      </div>
+    </div>
+
+    <h4>캡처된 이벤트 구조 (captured_events 항목)</h4>
+    <pre>{
+  <span class="key">"data"</span>: {
+    <span class="key">"event"</span>: <span class="str">"view_item"</span>,
+    <span class="key">"ecommerce"</span>: {
+      <span class="key">"items"</span>: [{ <span class="key">"item_id"</span>: <span class="str">"SKU-001"</span>, <span class="key">"item_name"</span>: <span class="str">"상품명"</span>, <span class="key">"price"</span>: <span class="val">29900</span> }],
+      <span class="key">"value"</span>: <span class="val">29900</span>,
+      <span class="key">"currency"</span>: <span class="str">"KRW"</span>
+    }
+  },
+  <span class="key">"timestamp"</span>: <span class="val">1713499200000</span>,
+  <span class="key">"url"</span>: <span class="str">"https://example.com/product/1"</span>,
+  <span class="key">"source"</span>: <span class="str">""</span>  <span class="cmt">// "" = dataLayer 발화, "dom_extraction" = DOM에서 추출</span>
+}</pre>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title io-in">▼ 입력 변수</div>
+        <div class="field-row"><span class="field-name">exploration_queue</span></div>
+        <div class="field-row"><span class="field-name">auto_capturable</span></div>
+        <div class="field-row"><span class="field-name">cart_addition_events</span><span class="field-desc">(N3.25로 스킵)</span></div>
+        <div class="field-row"><span class="field-name">begin_checkout_events</span><span class="field-desc">(N3.5로 스킵)</span></div>
+        <div class="field-row"><span class="field-name">current_url</span></div>
+        <div class="field-row"><span class="field-name">click_triggers</span></div>
+        <div class="field-row"><span class="field-name">dom_selectors</span></div>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title io-out">▲ 출력 변수</div>
+        <div class="field-row"><span class="field-name">captured_events</span><span class="field-desc">캡처된 이벤트 목록 (누적)</span></div>
+        <div class="field-row"><span class="field-name">event_capture_log</span><span class="field-desc">이벤트별 처리 방식 기록</span></div>
+        <div class="field-row"><span class="field-name">manual_required</span><span class="field-desc">실패한 이벤트 추가</span></div>
+        <div class="field-row"><span class="field-name">current_url</span><span class="field-desc">탐색 종료 시점 URL</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ NODE 5 ══════════════════════════ -->
+  <h2 id="n5">5. Node 5 — Planning Agent (GTM 설계안 생성)</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-cyan">N5</span>
+      <span class="card-title">LLM이 캡처 이벤트를 분석해 Variable/Trigger/Tag 설계안 생성 + HITL 승인</span>
+    </div>
+
+    <h3>이벤트 source 필드로 트리거 타입 자동 결정</h3>
+    <div class="tree-box">
+<span class="tree-root">captured_events[i].source</span>
+├── <span class="tree-cond">""  /  "datalayer"  /  "datalayer+dom"</span>
+│   └── <span class="tree-result-dl">→ dataLayer에서 발화된 이벤트</span>
+│       ├── <span class="tree-result-dl">Variable: DLV (type "v")  — dataLayer 값 참조</span>
+│       ├── <span class="tree-result-dl">Trigger: Custom Event (type "customEvent")</span>
+│       └── <span class="tree-result-dl">Tag: GA4 Event (type "gaawe")</span>
+│
+└── <span class="tree-cond">"dom_extraction"</span>
+    └── <span class="tree-result-dom">→ DOM에서 추출한 이벤트</span>
+        ├── <span class="tree-result-dom">Variable: DOM Element (type "d") 또는 Custom JS (type "jsm")</span>
+        ├── <span class="tree-result-dom">Trigger: Click Trigger (type "click")</span>
+        └── <span class="tree-result-dom">Tag: GA4 Event (type "gaawe")</span>
+    </div>
+
+    <h3>설계안 JSON 구조 (plan 필드)</h3>
+    <pre>{
+  <span class="key">"variables"</span>: [
+    {
+      <span class="key">"name"</span>: <span class="str">"DLV - ecommerce.items"</span>,  <span class="cmt">// 네이밍: "DLV - {dataLayer 경로}"</span>
+      <span class="key">"type"</span>: <span class="str">"v"</span>,                      <span class="cmt">// v=dataLayer변수, c=상수, jsm=CJS, d=DOM</span>
+      <span class="key">"parameters"</span>: [
+        { <span class="key">"type"</span>: <span class="str">"integer"</span>, <span class="key">"key"</span>: <span class="str">"dataLayerVersion"</span>, <span class="key">"value"</span>: <span class="str">"2"</span> },
+        { <span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"name"</span>, <span class="key">"value"</span>: <span class="str">"ecommerce.items"</span> }
+      ]
+    },
+    {
+      <span class="key">"name"</span>: <span class="str">"GA4 Measurement ID"</span>,        <span class="cmt">// measurement_id를 상수 변수로</span>
+      <span class="key">"type"</span>: <span class="str">"c"</span>,
+      <span class="key">"parameters"</span>: [
+        { <span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"value"</span>, <span class="key">"value"</span>: <span class="str">"G-XXXXXXXXXX"</span> }
+      ]
+    }
+  ],
+  <span class="key">"triggers"</span>: [
+    {
+      <span class="key">"name"</span>: <span class="str">"CE - view_item"</span>,           <span class="cmt">// Custom Event Trigger</span>
+      <span class="key">"type"</span>: <span class="str">"customEvent"</span>,
+      <span class="key">"customEventFilter"</span>: [{
+        <span class="key">"type"</span>: <span class="str">"equals"</span>,
+        <span class="key">"parameter"</span>: [
+          { <span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"arg0"</span>, <span class="key">"value"</span>: <span class="str">"{{_event}}"</span> },  <span class="cmt">// 반드시 {{_event}}</span>
+          { <span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"arg1"</span>, <span class="key">"value"</span>: <span class="str">"view_item"</span> }   <span class="cmt">// 실제 이벤트명</span>
+        ]
+      }]
+    }
+  ],
+  <span class="key">"tags"</span>: [
+    {
+      <span class="key">"name"</span>: <span class="str">"GA4 - view_item"</span>,
+      <span class="key">"type"</span>: <span class="str">"gaawe"</span>,                    <span class="cmt">// GA4 Event Tag 타입</span>
+      <span class="key">"parameters"</span>: [
+        { <span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"eventName"</span>, <span class="key">"value"</span>: <span class="str">"view_item"</span> },
+        { <span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"measurementIdOverride"</span>, <span class="key">"value"</span>: <span class="str">"{{GA4 Measurement ID}}"</span> }
+      ],
+      <span class="key">"event_parameters"</span>: [               <span class="cmt">// GA4로 보낼 커스텀 파라미터</span>
+        { <span class="key">"key"</span>: <span class="str">"currency"</span>, <span class="key">"value"</span>: <span class="str">"KRW"</span> },
+        { <span class="key">"key"</span>: <span class="str">"items"</span>,    <span class="key">"value"</span>: <span class="str">"{{DLV - ecommerce.items}}"</span> }
+      ],
+      <span class="key">"firing_trigger_names"</span>: [<span class="str">"CE - view_item"</span>]  <span class="cmt">// 이름으로 연결 (N6에서 ID로 변환)</span>
+    }
+  ]
+}</pre>
+
+    <div class="callout">
+      <strong>HITL (Human-in-the-Loop) 승인:</strong>
+      설계안이 완성되면 사용자에게 승인을 요청합니다.
+      <strong>CLI 모드</strong>는 터미널에서 y/n 입력, <strong>UI 모드(file)</strong>는 <code>logs/{run_id}/hitl_response.json</code> 파일을 5분 폴링합니다.
+      거부 시 피드백을 받아 LLM이 재설계합니다.
+    </div>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title io-in">▼ 입력 변수</div>
+        <div class="field-row"><span class="field-name">captured_events</span></div>
+        <div class="field-row"><span class="field-name">manual_capture_results</span></div>
+        <div class="field-row"><span class="field-name">extraction_method</span></div>
+        <div class="field-row"><span class="field-name">tag_type</span></div>
+        <div class="field-row"><span class="field-name">measurement_id</span></div>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title io-out">▲ 출력 변수</div>
+        <div class="field-row"><span class="field-name">plan</span><span class="field-desc">variables/triggers/tags 설계안</span></div>
+        <div class="field-row"><span class="field-name">plan_approved</span><span class="field-desc">HITL 승인 여부 (bool)</span></div>
+        <div class="field-row"><span class="field-name">hitl_feedback</span><span class="field-desc">거부 시 사용자 피드백</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ NODE 6 ══════════════════════════ -->
+  <h2 id="n6">6. Node 6 — GTM Creation (핵심: GTM API 호출)</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-pink">N6</span>
+      <span class="card-title">plan 설계안을 GTM API로 실제 생성: Variable → Trigger → Tag (순서 엄수)</span>
+    </div>
+
+    <h3>전체 실행 흐름</h3>
+
+    <h4>Step A: Workspace 확보</h4>
+    <div class="decision-box">
+      <div class="decision-title">Workspace 분기 로직</div>
+      <div class="decision-row">
+        <span class="decision-cond">state에 workspace_id 있음</span>
+        <span class="decision-result">→ 목록 조회·HITL·생성 전부 생략. 해당 ID 바로 사용</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">기존 워크스페이스 수 &lt; 3</span>
+        <span class="decision-result">→ <code>gtm-ai-{timestamp}</code> 이름으로 신규 생성</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">기존 워크스페이스 수 ≥ 3</span>
+        <span class="decision-result">→ HITL로 재사용 여부 확인 (reuse 선택 시 <code>gtm-ai-*</code> 중 최신 사용)</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">429 Rate Limit (최대 3회)</span>
+        <span class="decision-result">→ 30/60/90초 대기 후 재시도 → 실패 시 기존 <code>gtm-ai-*</code> 재사용</span>
+      </div>
+    </div>
+
+    <h4>Step B: plan 자동 보정 (_fix_plan)</h4>
+    <pre><span class="cmt">"""
+_fix_plan이 하는 3가지 보정:
+1. captured_events의 DL 이벤트마다 CE - {event_name} 트리거가 없으면 자동 생성
+2. Tag의 firing_trigger_names가 비어 있으면 이벤트명 기반으로 자동 연결
+3. 잘못된 firing_trigger_names 참조를 정상 이름으로 교체
+"""</span>
+
+<span class="cmt"># DL 이벤트에 트리거가 없을 때 자동 생성 예시</span>
+triggers.append({
+    <span class="key">"name"</span>: <span class="str">"CE - view_item"</span>,
+    <span class="key">"type"</span>: <span class="str">"customEvent"</span>,
+    <span class="key">"customEventFilter"</span>: [{
+        <span class="key">"type"</span>: <span class="str">"equals"</span>,
+        <span class="key">"parameter"</span>: [
+            {<span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"arg0"</span>, <span class="key">"value"</span>: <span class="str">"{{_event}}"</span>},
+            {<span class="key">"type"</span>: <span class="str">"template"</span>, <span class="key">"key"</span>: <span class="str">"arg1"</span>, <span class="key">"value"</span>: <span class="str">"view_item"</span>}
+        ]
+    }]
+})</pre>
+
+    <h4>Step C: Variable 생성</h4>
+    <pre><span class="kw">for</span> var_spec <span class="kw">in</span> plan[<span class="str">"variables"</span>]:
+    variable = <span class="fn">_build_variable</span>(var_spec)    <span class="cmt"># GTMVariable 객체로 변환</span>
+    result = client.<span class="fn">create_or_update_variable</span>(workspace_id, variable)
+    created_variables.append(result)</pre>
+
+    <div class="decision-box">
+      <div class="decision-title">_build_variable: type별 처리</div>
+      <div class="decision-row">
+        <span class="decision-cond">type == "v" (DLV)</span>
+        <span class="decision-result">→ GTMVariable(name, type="v", parameters=[dataLayerVersion, name]) 그대로</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">type == "d" + ID 있음</span>
+        <span class="decision-result">→ GTMVariable(type="d", [elementId, attributeName]) — HTML id 기반</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">type == "d" + CSS selector만 있음</span>
+        <span class="decision-result">→ 자동으로 type="jsm"으로 변환 (CSS selector → Custom JavaScript)</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">type == "jsm" (CJS)</span>
+        <span class="decision-result">→ GTMVariable(type="jsm", [javascript 함수 코드])</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">type == "js" (LLM 오타)</span>
+        <span class="decision-result">→ "jsm"으로 자동 보정 (_VARIABLE_TYPE_MAP)</span>
+      </div>
+      <div class="decision-row">
+        <span class="decision-cond">값이 비어 있음</span>
+        <span class="decision-result">→ None 반환 → 상위에서 드롭 (생성 안 함)</span>
+      </div>
+    </div>
+
+    <h4>Step D: Trigger 생성 (이름→ID 매핑 저장)</h4>
+    <pre><span class="kw">for</span> trig_spec <span class="kw">in</span> plan[<span class="str">"triggers"</span>]:
+    trigger = <span class="fn">_build_trigger</span>(trig_spec)
+    result = client.<span class="fn">create_or_update_trigger</span>(workspace_id, trigger)
+    created_triggers.append(result)
+    trigger_name_to_id[result[<span class="str">"name"</span>]] = result[<span class="str">"triggerId"</span>]  <span class="cmt"># 이름 → ID 맵</span></pre>
+
+    <div class="callout callout-blue">
+      <strong>customEventFilter 강제 보정:</strong>
+      LLM이 <code>arg0</code>에 DLV 변수 참조를 넣는 경우가 있습니다.
+      <code>_fix_custom_event_filter</code>가 arg0를 항상 <code>{"{{_event}}"}</code>로 강제합니다.
+      GTM API는 customEventFilter의 arg0가 반드시 <code>{{_event}}</code>여야 하기 때문입니다.
+    </div>
+
+    <h4>Step E: Tag 생성 (trigger 이름 → ID 변환)</h4>
+    <pre><span class="kw">for</span> tag_spec <span class="kw">in</span> plan[<span class="str">"tags"</span>]:
+    firing_names = tag_spec.get(<span class="str">"firing_trigger_names"</span>, [])
+    <span class="cmt"># "CE - view_item" 이름을 실제 triggerId로 변환</span>
+    firing_ids = [
+        trigger_name_to_id[name]
+        <span class="kw">for</span> name <span class="kw">in</span> firing_names
+        <span class="kw">if</span> name <span class="kw">in</span> trigger_name_to_id
+    ]
+    tag = <span class="fn">_build_tag</span>(tag_spec, firing_ids)
+    result = client.<span class="fn">create_or_update_tag</span>(workspace_id, tag)
+    created_tags.append(result)</pre>
+
+    <div class="callout callout-green">
+      <strong>event_parameters 변환:</strong>
+      Plan의 <code>event_parameters</code> (<code>[{"key": "items", "value": "{{DLV - ecommerce.items}}"}]</code>)는
+      GTM API 형식인 list/map 중첩 구조로 자동 변환됩니다.
+      <pre style="margin-top:8px">{
+  <span class="key">"type"</span>: <span class="str">"list"</span>,
+  <span class="key">"key"</span>: <span class="str">"eventParameters"</span>,
+  <span class="key">"list"</span>: [{ <span class="key">"type"</span>: <span class="str">"map"</span>, <span class="key">"map"</span>: [
+    {<span class="key">"type"</span>:<span class="str">"template"</span>, <span class="key">"key"</span>:<span class="str">"name"</span>,  <span class="key">"value"</span>:<span class="str">"items"</span>},
+    {<span class="key">"type"</span>:<span class="str">"template"</span>, <span class="key">"key"</span>:<span class="str">"value"</span>, <span class="key">"value"</span>:<span class="str">"{{DLV - ecommerce.items}}"</span>}
+  ]}]
+}</pre>
+    </div>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title io-in">▼ 입력 변수</div>
+        <div class="field-row"><span class="field-name">plan</span><span class="field-desc">variables/triggers/tags 설계안</span></div>
+        <div class="field-row"><span class="field-name">account_id</span></div>
+        <div class="field-row"><span class="field-name">container_id</span></div>
+        <div class="field-row"><span class="field-name">workspace_id</span><span class="field-desc">(선택: 이미 있으면 생성 스킵)</span></div>
+        <div class="field-row"><span class="field-name">captured_events</span><span class="field-desc">_fix_plan에서 누락 트리거 감지용</span></div>
+        <div class="field-row"><span class="field-name">hitl_mode</span></div>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title io-out">▲ 출력 변수</div>
+        <div class="field-row"><span class="field-name">workspace_id</span><span class="field-desc">생성/재사용된 Workspace ID</span></div>
+        <div class="field-row"><span class="field-name">created_variables</span><span class="field-desc">생성된 Variable 목록</span></div>
+        <div class="field-row"><span class="field-name">created_triggers</span><span class="field-desc">생성된 Trigger 목록</span></div>
+        <div class="field-row"><span class="field-name">created_tags</span><span class="field-desc">생성된 Tag 목록</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ GTM API ══════════════════════════ -->
+  <h2 id="api">7. GTM API 호출 상세 (GTMClient)</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-blue">gtm/client.py</span>
+      <span class="card-title">create_or_update_* 패턴 — 이름 충돌 자동 처리</span>
+    </div>
+
+    <h3>API 호출 패턴 (모든 리소스 공통)</h3>
+    <pre><span class="kw">def</span> <span class="fn">create_or_update_variable</span>(<span class="kw">self</span>, workspace_id: str, variable: GTMVariable) -> dict:
+    <span class="cmt"># 1. 기존 동일 이름 리소스 조회</span>
+    existing = <span class="kw">self</span>.<span class="fn">_find_resource_by_name</span>(<span class="str">"variables"</span>, workspace_id, variable.name)
+    <span class="kw">if</span> existing:
+        <span class="cmt"># 2. 이미 있으면 update (덮어쓰기)</span>
+        <span class="kw">return</span> <span class="kw">self</span>.<span class="fn">_update</span>(<span class="str">"variables"</span>, workspace_id, existing[<span class="str">"variableId"</span>], body)
+    <span class="kw">else</span>:
+        <span class="cmt"># 3. 없으면 create (신규 생성)</span>
+        <span class="kw">return</span> <span class="kw">self</span>.<span class="fn">_create</span>(<span class="str">"variables"</span>, workspace_id, body)</pre>
+
+    <h3>GTM REST API v2 — 리소스 경로</h3>
+    <table class="var-table">
+      <thead>
+        <tr><th>리소스</th><th>API 경로 패턴</th><th>메서드</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Workspace 목록</td>
+          <td><code>accounts/{acc}/containers/{con}/workspaces</code></td>
+          <td>GET (list)</td>
+        </tr>
+        <tr>
+          <td>Workspace 생성</td>
+          <td><code>accounts/{acc}/containers/{con}/workspaces</code></td>
+          <td>POST (create)</td>
+        </tr>
+        <tr>
+          <td>Variable 생성</td>
+          <td><code>.../workspaces/{ws}/variables</code></td>
+          <td>POST (create)</td>
+        </tr>
+        <tr>
+          <td>Variable 수정</td>
+          <td><code>.../workspaces/{ws}/variables/{varId}</code></td>
+          <td>PUT (update)</td>
+        </tr>
+        <tr>
+          <td>Trigger 생성</td>
+          <td><code>.../workspaces/{ws}/triggers</code></td>
+          <td>POST (create)</td>
+        </tr>
+        <tr>
+          <td>Tag 생성</td>
+          <td><code>.../workspaces/{ws}/tags</code></td>
+          <td>POST (create)</td>
+        </tr>
+        <tr>
+          <td>버전 생성</td>
+          <td><code>.../workspaces/{ws}/create_version</code></td>
+          <td>POST</td>
+        </tr>
+        <tr>
+          <td>Publish</td>
+          <td><code>.../versions/{versionId}:publish</code></td>
+          <td>POST</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>GTM 리소스 데이터 모델</h3>
+    <div class="resource-grid">
+      <div class="resource-card">
+        <div class="resource-card-title rc-var">GTMVariable</div>
+        <pre style="font-size:11px;padding:10px">{
+  <span class="key">"name"</span>: <span class="str">"DLV - ecommerce.items"</span>,
+  <span class="key">"type"</span>: <span class="str">"v"</span>,
+  <span class="key">"parameter"</span>: [
+    {<span class="key">"type"</span>:<span class="str">"integer"</span>, <span class="key">"key"</span>:<span class="str">"dataLayerVersion"</span>, <span class="key">"value"</span>:<span class="str">"2"</span>},
+    {<span class="key">"type"</span>:<span class="str">"template"</span>, <span class="key">"key"</span>:<span class="str">"name"</span>, <span class="key">"value"</span>:<span class="str">"ecommerce.items"</span>}
+  ]
+}</pre>
+        <p style="font-size:11px;color:var(--text-muted)">type: v=DLV, c=상수, jsm=CJS, d=DOM</p>
+      </div>
+      <div class="resource-card">
+        <div class="resource-card-title rc-trig">GTMTrigger</div>
+        <pre style="font-size:11px;padding:10px">{
+  <span class="key">"name"</span>: <span class="str">"CE - view_item"</span>,
+  <span class="key">"type"</span>: <span class="str">"customEvent"</span>,
+  <span class="key">"customEventFilter"</span>: [{
+    <span class="key">"type"</span>: <span class="str">"equals"</span>,
+    <span class="key">"parameter"</span>: [
+      {<span class="key">"key"</span>:<span class="str">"arg0"</span>, <span class="key">"value"</span>:<span class="str">"{{_event}}"</span>},
+      {<span class="key">"key"</span>:<span class="str">"arg1"</span>, <span class="key">"value"</span>:<span class="str">"view_item"</span>}
+    ]
+  }]
+}</pre>
+        <p style="font-size:11px;color:var(--text-muted)">type: customEvent, click, pageview 등</p>
+      </div>
+      <div class="resource-card">
+        <div class="resource-card-title rc-tag">GTMTag</div>
+        <pre style="font-size:11px;padding:10px">{
+  <span class="key">"name"</span>: <span class="str">"GA4 - view_item"</span>,
+  <span class="key">"type"</span>: <span class="str">"gaawe"</span>,
+  <span class="key">"parameter"</span>: [
+    {<span class="key">"key"</span>:<span class="str">"eventName"</span>, <span class="key">"value"</span>:<span class="str">"view_item"</span>},
+    {<span class="key">"key"</span>:<span class="str">"measurementIdOverride"</span>,
+     <span class="key">"value"</span>:<span class="str">"{{GA4 Measurement ID}}"</span>}
+  ],
+  <span class="key">"firingTriggerId"</span>: [<span class="str">"triggerId-xxx"</span>]
+}</pre>
+        <p style="font-size:11px;color:var(--text-muted)">type: gaawe=GA4, html=커스텀 HTML</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ 네이밍 ══════════════════════════ -->
+  <h2 id="naming">8. 네이밍 컨벤션 — 변수/트리거/태그 이름 규칙</h2>
+  <div class="card">
+    <table class="var-table">
+      <thead>
+        <tr><th>리소스 타입</th><th>패턴</th><th>예시</th><th>GTM API type</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>DataLayer Variable</td>
+          <td><code>DLV - {dataLayer 경로}</code></td>
+          <td><code>DLV - ecommerce.items</code></td>
+          <td><span class="badge badge-cyan">v</span></td>
+        </tr>
+        <tr>
+          <td>Constant Variable</td>
+          <td><code>GA4 Measurement ID</code></td>
+          <td><code>GA4 Measurement ID</code></td>
+          <td><span class="badge badge-green">c</span></td>
+        </tr>
+        <tr>
+          <td>DOM Element Variable</td>
+          <td><code>DOM - {필드명}</code></td>
+          <td><code>DOM - item_name</code></td>
+          <td><span class="badge badge-orange">d / jsm</span></td>
+        </tr>
+        <tr>
+          <td>Custom JS Variable</td>
+          <td><code>CJS - {필드명}</code></td>
+          <td><code>CJS - ecommerce_items</code></td>
+          <td><span class="badge badge-purple">jsm</span></td>
+        </tr>
+        <tr>
+          <td>Custom Event Trigger</td>
+          <td><code>CE - {event_name}</code></td>
+          <td><code>CE - view_item</code></td>
+          <td><span class="badge badge-blue">customEvent</span></td>
+        </tr>
+        <tr>
+          <td>Click Trigger</td>
+          <td><code>Click - {설명}</code></td>
+          <td><code>Click - 찜하기 버튼</code></td>
+          <td><span class="badge badge-red">click</span></td>
+        </tr>
+        <tr>
+          <td>GA4 Tag</td>
+          <td><code>GA4 - {event_name}</code></td>
+          <td><code>GA4 - add_to_cart</code></td>
+          <td><span class="badge badge-pink">gaawe</span></td>
+        </tr>
+        <tr>
+          <td>AI Workspace</td>
+          <td><code>gtm-ai-{YYYYMMDD_HHMMSS}</code></td>
+          <td><code>gtm-ai-20260419_161950</code></td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══════════════════════════ STATE FLOW ══════════════════════════ -->
+  <h2 id="state">9. State 전달 흐름 — GTMAgentState</h2>
+  <div class="card">
+    <p>LangGraph는 모든 노드 간 데이터를 <strong>GTMAgentState</strong> TypedDict 하나로 전달합니다. 각 노드는 자신이 담당하는 필드만 갱신한 새 dict를 반환하고, 나머지 필드는 이전 state에서 그대로 이어받습니다.</p>
+
+    <pre><span class="cmt"># 각 노드 반환 패턴</span>
+<span class="kw">return</span> {
+    **state,               <span class="cmt"># 이전 state 전체 복사 (변경되지 않은 필드 유지)</span>
+    <span class="key">"workspace_id"</span>: workspace_id,          <span class="cmt"># N6 갱신</span>
+    <span class="key">"created_variables"</span>: created_variables, <span class="cmt"># N6 갱신</span>
+    <span class="key">"created_triggers"</span>: created_triggers,   <span class="cmt"># N6 갱신</span>
+    <span class="key">"created_tags"</span>: created_tags,           <span class="cmt"># N6 갱신</span>
+    <span class="key">"error"</span>: <span class="kw">None</span>,                          <span class="cmt"># 성공 시 None</span>
+}</pre>
+
+    <h3>핵심 라우팅 분기점</h3>
+    <table class="var-table">
+      <thead>
+        <tr><th>라우팅 함수</th><th>분기 기준 필드</th><th>경로</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>route_after_classifier</code></td>
+          <td><code>datalayer_status == "full"</code></td>
+          <td>true → N2, false → N1.5 → N2</td>
+        </tr>
+        <tr>
+          <td><code>route_after_active_explorer</code></td>
+          <td><code>cart_addition_events</code> 있음</td>
+          <td>true → N3.25, false → N3.5 or N4</td>
+        </tr>
+        <tr>
+          <td><code>route_after_explorer</code></td>
+          <td><code>manual_required</code> 비어있음</td>
+          <td>true → N5, false → N4 → N5</td>
+        </tr>
+        <tr>
+          <td><code>route_after_planning</code></td>
+          <td><code>plan_approved</code> && <code>error</code> 없음</td>
+          <td>true → N6, false → N8 (Reporter)</td>
+        </tr>
+        <tr>
+          <td><code>route_after_creation</code></td>
+          <td><code>error</code> 없음</td>
+          <td>true → N7 (Publish), false → N8</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ══════════════════════════ NODE 7 ══════════════════════════ -->
+  <h2 id="n7">10. Node 7 — Publish &amp; Node 8 — Reporter</h2>
+  <div class="card">
+    <div class="card-header">
+      <span class="badge badge-green" style="background:rgba(57,211,83,0.2)">N7</span>
+      <span class="badge badge-orange" style="margin-left:8px">N8</span>
+      <span class="card-title">Workspace → Version 생성 → Publish + 최종 보고서</span>
+    </div>
+
+    <div class="io-grid">
+      <div class="io-box">
+        <div class="io-box-title" style="color:var(--teal)">N7 — Publish</div>
+        <div class="field-row"><span class="field-name">입력</span><span class="field-desc">workspace_id, account_id, container_id</span></div>
+        <div class="field-row" style="margin-top:8px"><span class="field-name">출력</span><span class="field-desc">publish_result: {success, version_id, warning}</span></div>
+        <p style="margin-top:10px;font-size:12px;color:var(--text-muted)">
+          <code>create_version</code> → <code>publish_version</code> 순서로 호출합니다.
+          권한 부족 시 오류가 아닌 <code>publish_warning</code>으로 기록하고 N8로 계속 진행합니다.
+        </p>
+      </div>
+      <div class="io-box">
+        <div class="io-box-title" style="color:var(--yellow)">N8 — Reporter</div>
+        <div class="field-row"><span class="field-name">입력</span><span class="field-desc">state 전체</span></div>
+        <div class="field-row" style="margin-top:8px"><span class="field-name">출력</span><span class="field-desc">report_path: logs/{run_id}/report.md</span></div>
+        <p style="margin-top:10px;font-size:12px;color:var(--text-muted)">
+          항상 마지막에 실행됩니다 (오류 경로 포함). 이벤트별 처리 내역(event_capture_log),
+          Variable/Trigger/Tag 개수, Publish 결과를 마크다운으로 정리합니다.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════ UI EMIT ══════════════════════════ -->
+  <h2 id="ui">11. UI 실시간 동기화 — emit / update_state</h2>
+  <div class="card">
+    <p>모든 노드는 <code>utils.ui_emitter</code>의 <code>emit()</code>과 <code>update_state()</code>를 통해 실시간으로 UI에 상태를 전달합니다.</p>
+
+    <table class="var-table">
+      <thead>
+        <tr><th>emit 이벤트 타입</th><th>주요 페이로드</th><th>UI 효과</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>node_enter</code></td>
+          <td>node_id, node_key, title</td>
+          <td>타임라인에서 해당 노드 "run" 상태로 하이라이트</td>
+        </tr>
+        <tr>
+          <td><code>node_exit</code></td>
+          <td>node_id, status(done/failed), duration_ms</td>
+          <td>노드 완료/실패 표시, 소요 시간 업데이트</td>
+        </tr>
+        <tr>
+          <td><code>thought</code></td>
+          <td>who, label, text, kind</td>
+          <td>채팅 버블에 에이전트 추론 과정 표시</td>
+        </tr>
+        <tr>
+          <td><code>gtm_created</code></td>
+          <td>kind(variable/trigger/tag), name, operation</td>
+          <td>Resources 탭에 생성된 항목 실시간 추가</td>
+        </tr>
+        <tr>
+          <td><code>hitl_request</code></td>
+          <td>kind(planning/workspace_full), workspaces</td>
+          <td>승인 요청 카드 표시, 사용자 입력 대기</td>
+        </tr>
+        <tr>
+          <td><code>hitl_decision</code></td>
+          <td>approved, feedback</td>
+          <td>승인 카드 닫기, 결과 표시</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout callout-green">
+      <strong>state.json 동기화:</strong>
+      N6는 성공/실패 모두 <code>_sync_created_resources_ui()</code>를 호출해
+      <code>logs/{run_id}/state.json</code>에 <code>created_variables</code>, <code>created_triggers</code>, <code>created_tags</code>를 기록합니다.
+      UI의 Resources 탭은 이 파일을 폴링해 표시합니다.
+    </div>
+  </div>
+
+  </div><!-- /main-content -->
+
+  <!-- ── TOC ── -->
+  <div>
+    <div class="toc" style="position:sticky;top:20px;">
+      <div class="toc-title">목차</div>
+      <a href="#entry">0. 실행 진입 (runner)</a>
+      <a href="#n1">1. Node 1 — Page Classifier</a>
+      <a href="#n15">2. Node 1.5 — Structure Analyzer</a>
+      <a href="#n2">3. Node 2 — Journey Planner</a>
+      <a href="#n3">4. Node 3 — Active Explorer</a>
+      <a href="#n5">5. Node 5 — Planning Agent</a>
+      <a href="#n6">6. Node 6 — GTM Creation ★</a>
+      <a href="#api">7. GTM API 호출 상세</a>
+      <a href="#naming">8. 네이밍 컨벤션</a>
+      <a href="#state">9. State 전달 흐름</a>
+      <a href="#n7">10. Node 7/8 — Publish/Reporter</a>
+      <a href="#ui">11. UI 실시간 동기화</a>
+    </div>
+  </div>
+
+  </div><!-- /main-layout -->
+
+</div><!-- /wrapper -->
+</body>
+</html>

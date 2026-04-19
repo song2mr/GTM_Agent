@@ -11,6 +11,7 @@ dataLayer가 없는 경우(extraction_method != "datalayer"):
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 from playwright.async_api import Page, async_playwright
 
@@ -109,6 +110,84 @@ def _auto_capturable_with_cart_addition_order(
     return others + ["view_cart"]
 
 
+def _surface_goal_reached(url: str, surface_goal: str) -> bool:
+    u = (url or "").lower()
+    goal = (surface_goal or "").lower()
+    if goal in ("", "current", "unknown"):
+        return True
+    if goal == "pdp":
+        return ("/product/" in u) or ("goods_view" in u) or ("product_no=" in u)
+    if goal == "plp":
+        return ("/category/" in u) or ("goods_list" in u) or ("catecd=" in u)
+    if goal == "cart":
+        return "/cart" in u or "/basket" in u
+    if goal == "checkout":
+        return "/checkout" in u or "/order" in u or "checkout" in u
+    if goal == "home":
+        return urlparse(u).path in ("", "/")
+    return True
+
+
+def _surface_seed_url(base_url: str, surface_goal: str) -> str | None:
+    parsed = urlparse(base_url or "")
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    goal = (surface_goal or "").lower()
+    if goal == "cart":
+        return origin + "/cart"
+    if goal == "checkout":
+        return origin + "/checkout"
+    if goal == "home":
+        return origin + "/"
+    return None
+
+
+def _url_to_observed_pattern(url: str, surface_goal: str) -> tuple[str, str] | None:
+    """실제 방문한 URL을 관측 기반 정규식으로 요약.
+
+    (key, regex) 반환. key는 surface_goal 또는 "current".
+    """
+    path = urlparse(url or "").path or "/"
+    if not path:
+        return None
+    segs = [s for s in path.split("/") if s]
+    if not segs:
+        return (surface_goal or "home", r"^/?$")
+    # 마지막 세그먼트가 수치/슬러그라면 `/prefix/[^/]+/?$` 형태로 일반화.
+    prefix = "/".join(segs[:-1])
+    key = (surface_goal or "current").lower()
+    if prefix:
+        regex = rf"^/{prefix}/[^/]+/?$"
+    else:
+        regex = rf"^/{segs[0]}/?$"
+    return key, regex
+
+
+def _attach_evidence(
+    event_row: dict,
+    *,
+    page_url: str,
+    dom_resolved: dict | None = None,
+    json_ld_data: dict | None = None,
+    failures: list[dict] | None = None,
+) -> dict:
+    """`captured_events[i].evidence`에 고정 포맷으로 판단 재료를 박는다(§Phase 1b Done-when)."""
+    data = event_row.get("data") or {}
+    url = event_row.get("url") or page_url or ""
+    path = urlparse(url).path if url else ""
+    evidence = {
+        "url": url,
+        "path": path,
+        "datalayer": {"fired": event_row.get("source") != "dom_extraction", "sample": data},
+        "dom": {"resolved": dict(dom_resolved or {})},
+        "json_ld": {"extracted": dict(json_ld_data or {})},
+        "failures": list(failures or []),
+    }
+    event_row.setdefault("evidence", evidence)
+    return event_row
+
+
 async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     """Node 3: LLM Navigator + Playwright 루프."""
     emit("node_enter", node_id=3, node_key="active_explorer", title="Active Explorer")
@@ -122,6 +201,10 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     captured_events: list[dict] = list(state.get("captured_events", []))
     exploration_log: list[str] = list(state.get("exploration_log", []))
     event_capture_log: list[dict] = list(state.get("event_capture_log", []))
+    exploration_failures: list[dict] = list(state.get("exploration_failures") or [])
+    observed_url_patterns: dict = dict(state.get("site_url_patterns") or {})
+    json_ld_data = state.get("json_ld_data") or {}
+    selector_validation = state.get("selector_validation") or {}
 
     extraction_method = state.get("extraction_method", "datalayer")
     dom_selectors = state.get("dom_selectors", {})
@@ -129,6 +212,12 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     use_dom = extraction_method != "datalayer"
 
     navigator = LLMNavigator()
+    exploration_plan = list(state.get("exploration_plan") or [])
+    playbook_by_event = {
+        str(row.get("event", "")): row.get("playbook", {})
+        for row in exploration_plan
+        if isinstance(row, dict) and row.get("event")
+    }
     last_pdp_url = (state.get("last_pdp_url") or "").strip()
 
     headless = os.environ.get("GTM_AI_HEADLESS", "").lower() in ("1", "true", "yes")
@@ -202,12 +291,46 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
             )
 
             for target_event in ordered_auto:
+                playbook = playbook_by_event.get(target_event, {})
                 try:
                     u = page.url
                     if url_looks_like_pdp(u):
                         last_pdp_url = u
                 except Exception:
                     pass
+
+                surface_goal = str(playbook.get("surface_goal", "unknown"))
+                if not _surface_goal_reached(page.url, surface_goal):
+                    seed_url = _surface_seed_url(target_url, surface_goal)
+                    if seed_url:
+                        nav_surface = await navigate(page, seed_url)
+                        if nav_surface.success:
+                            await page.wait_for_timeout(1200)
+                            exploration_log.append(
+                                f"{target_event}: playbook surface_goal({surface_goal}) 선행 이동 {seed_url}"
+                            )
+                            logger.info(
+                                f"[ActiveExplorer] {target_event} surface_goal={surface_goal} seed 이동 성공 {seed_url}"
+                            )
+                        else:
+                            exploration_log.append(
+                                f"{target_event}: playbook surface_goal({surface_goal}) 이동 실패 {seed_url}"
+                            )
+                    if not _surface_goal_reached(page.url, surface_goal):
+                        exploration_failures.append(
+                            {
+                                "event": target_event,
+                                "reason": "surface_unreached",
+                                "detail": f"surface_goal={surface_goal} after seed attempt, url={page.url}",
+                                "url": page.url,
+                            }
+                        )
+
+                # 관측된 URL → site_url_patterns(observed) 누적.
+                obs_pair = _url_to_observed_pattern(page.url, surface_goal)
+                if obs_pair:
+                    key, regex = obs_pair
+                    observed_url_patterns.setdefault(key, regex)
 
                 if target_event in deferred:
                     exploration_log.append(
@@ -373,7 +496,12 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
                     target_event=target_event,
                 )
 
-                result = await navigator.run_for_event(page, target_event, captured_events)
+                result = await navigator.run_for_event(
+                    page,
+                    target_event,
+                    captured_events,
+                    playbook=playbook,
+                )
 
                 _nav_post_snap = await snapshot_datalayer_names(page)
                 logger.log_dl_state(
@@ -477,6 +605,20 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
             except Exception as e:
                 logger.debug(f"[ActiveExplorer] browser.close() 예외 무시: {e}")
 
+    # 이벤트에 evidence 고정 포맷 부착(없는 경우만).
+    for ev in captured_events:
+        _attach_evidence(
+            ev,
+            page_url=ev.get("url", ""),
+            dom_resolved=selector_validation,
+            json_ld_data=json_ld_data,
+            failures=[
+                f
+                for f in exploration_failures
+                if f.get("event") == (ev.get("data") or {}).get("event")
+            ],
+        )
+
     logger.info(f"[ActiveExplorer] 총 캡처 이벤트: {len(captured_events)}개")
     logger.info(f"[ActiveExplorer] Manual 이관: {manual_required}")
     logger.info(
@@ -510,6 +652,9 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
     ):
         update_state(nodes_status={"manual_capture": "skip"})
 
+    merged_url_patterns = dict(state.get("site_url_patterns") or {})
+    merged_url_patterns.update(observed_url_patterns)
+
     return {
         **state,
         "captured_events": captured_events,
@@ -518,4 +663,6 @@ async def active_explorer(state: GTMAgentState) -> GTMAgentState:
         "last_pdp_url": last_pdp_url,
         "exploration_log": exploration_log,
         "event_capture_log": event_capture_log,
+        "exploration_failures": exploration_failures,
+        "site_url_patterns": merged_url_patterns,
     }

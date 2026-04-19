@@ -160,8 +160,40 @@ GTMTag(
 
 ---
 
+## spec_builder.py — CanPlan → GTM 모델 스펙
+
+`agent/canplan`의 `canplan/1`을 그대로 받아 `GTMVariable/GTMTrigger/GTMTag` 리스트로 직렬화한다.
+레거시 `_fix_plan`·`_build_*` 경로와 완전히 분리돼 있으며, **정규화를 통과한 CanPlan만 입력**으로 받는다(재검증 없음).
+
+```python
+from gtm.spec_builder import build_specs_from_canplan
+
+variables, triggers, tags = build_specs_from_canplan(canplan)
+```
+
+### 내부 매핑
+
+- `_TRIGGER_TYPE_MAP` — CanPlan `kind`(`custom_event`) → GTM API type(`customEvent`) 등 1:1.
+- `_OP_MAP` — 필터 연산자를 `(gtm_op, negate)` 튜플로 변환. `not_*` 변형은 `negate=True`로 처리하고, `matches_regex`는 `matchRegex`.
+- 변수 kind별 처리:
+  - `datalayer` → `type: "v"` + `name` 파라미터(`params.path`)
+  - `dom_id` → `type: "d"` + `elementId`/`attributeName`
+  - `dom_selector` → **`type: "jsm"` CJS로 자동 변환** (공식 API에 CSS selector 모드가 없음)
+  - `cjs_template` → `agent.canplan.cjs_templates.render_template(id, args)` 결과를 `type: "jsm"`의 `javascript`로 주입
+  - `json_ld_path` → 현재 `jsm`로 렌더(path 기반 안전 접근 함수)
+  - `constant` → `type: "c"`
+  - `builtin` → GTM Built-in 이름 그대로 참조(`{{Page Path}}` 등)
+- 태그는 `firing_trigger_names` → 생성된 트리거 ID로 치환(`trigger_name_to_id` 맵).
+
+### 주의
+
+- **CanPlan이 담지 못하는 GTM 고급 옵션**(ex: consent, exception tags)은 현재 미지원. 필요 시 스키마(`agent/canplan/schema.py`)에 필드를 추가한 뒤 이 모듈에서 매핑한다.
+- 입력이 `canplan/1`이 아니면 `gtm_creation`에서 바로 레거시 경로로 폴백 — 이 모듈은 방어 로직을 두지 않는다.
+
+---
+
 ## 2026-04-19 변경점
 
-- `spec_builder.py`를 추가해 CanPlan 기반 빌드 경로를 분리했다.
-- `gtm_creation`은 CanPlan 경로가 있으면 `_fix_plan` 보정 없이 API 스펙으로 바로 직렬화한다.
-- 레거시 plan은 점진 전환을 위해 호환 경로로만 유지한다.
+- `spec_builder.py`를 추가해 CanPlan 기반 빌드 경로를 분리. `gtm_creation`이 CanPlan이 있으면 `_fix_plan` 보정 없이 API 스펙으로 직렬화.
+- 레거시 `plan` 경로는 `STRICT_CANPLAN=0` 환경에서만 허용되며, `gtm_creation._reject_in_set_in_legacy`가 `in_set` 조건을 런타임에 차단한다.
+- CJS 자유 JS 작성은 `agent/canplan/cjs_templates.REGISTERED_TEMPLATES`로 사전 제한. `spec_builder`는 미등록 템플릿이 들어올 가능성을 **CanPlan 통과 시점**에 이미 정규화가 걸러 줬다고 가정한다.

@@ -109,6 +109,13 @@ Navigator / Explorer에서 `captured_so_far`에 대한 `in` 비교는 금지.
 
 **관측 로그(`run.log`)**: `decide_next_action`마다 URL·스텝·스냅샷 길이·비정상 스냅샷(타임아웃 문자열 등), LLM `ainvoke` 전후 경과 시간, 파싱된 `action`, `_execute_action` 성공 여부를 `logger.info`로 남긴다. dataLayer 쪽은 `[DL]` / `[DL-Diag]` / `[DL-Raw]` 및 `get_captured_events` DEBUG가 추가된다 — **전체는 `utils/logger.py`의 JSONL**(`datalayer_trace.jsonl` 등) 참고.
 
+### 스냅샷 청크 재시도 (Phase 1b)
+
+`decide_next_action`은 `get_page_snapshot`이 실패 신호(`"스냅샷 타임아웃"` / `"스냅샷 실패"` / `"스냅샷 가공 실패"`)를 반환하거나 본문 길이가 **1500자 미만**이면, **¼ 페이지씩 `scrollBy`** 한 뒤 최대 **2회** 재스냅샷을 시도한다. 성공 조건은 `len(snapshot) >= 1500` + 에러 prefix 없음. 이 루프 덕분에 롱 페이지·lazy-load DOM에서도 LLM이 최소한의 컨텍스트를 본다.
+
+- 로그: `[Navigator] 스냅샷 chunked retry {n} 성공 len=…` / `실패: …` (파일 DEBUG).
+- 재시도 전후 `prefer_bottom` 설정은 유지. hybrid(`view_item`) 등 기존 전략과 독립 동작.
+
 ### `view_item`(hybrid) — 스냅샷·조기 `impossible` 주의
 
 - `view_item`은 `_strategy_kind`상 **hybrid** → `decide_next_action`에서 `prefer_bottom=False`, HTML은 **`get_page_snapshot`의 앞쪽 `max_chars`(기본 18000)만** LLM에 들어간다. **긴 메인 페이지**에서는 상단 배너/내비만 보이고 **상품 그리드가 스냅샷에 안 들어올 수 있다**. `page.content()`는 뷰포트 스크롤과 무관하므로 **scroll만으로는 잘린 문자열이 바뀌지 않는다**.
@@ -155,6 +162,10 @@ LLM이 받는 히스토리 텍스트 예시:
 스텝2 click (.btn-add-cart) → 이벤트 발화됨
 ```
 현재 이벤트 액션은 라벨 없음, 이전 이벤트 액션은 `[이벤트명]` 라벨로 구분.
+
+### Playbook 주입 (`agent/playbooks`)
+
+Journey Planner가 `state["exploration_plan"]`에 넣은 이벤트별 Playbook은 Active Explorer가 Navigator를 호출하기 직전에 `entry_hints.click_hints`·`url_patterns`·`observation.settle_ms` 등을 프롬프트와 대기 상한에 반영한다. Navigator 자체는 Playbook을 직접 읽지 않고, Active Explorer가 해석한 힌트를 시스템·휴먼 메시지로 요약해 내려준다(장벽을 나누어 두어 Navigator가 과도하게 이벤트 지식에 결합되지 않게 한다). Playbook 스키마/확장 규칙은 `agent/playbooks/CLAUDE.md` 참고.
 
 ### EVENT_CAPTURE_GUIDE
 

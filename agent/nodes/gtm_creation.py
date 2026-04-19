@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+import os
 
 from agent.state import GTMAgentState
 from gtm.client import GTMClient
 from gtm.dom_variable import normalize_dom_element_parameters
 from gtm.models import GTMParameter, GTMTag, GTMTrigger, GTMVariable
+from gtm.spec_builder import build_specs_from_canplan
 from utils import logger
 from utils.ui_emitter import emit, update_state
 
@@ -54,13 +56,13 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
     emit("node_enter", node_id=6, node_key="gtm_creation", title="GTM Creation")
     update_state(current_node=6, nodes_status={"gtm_creation": "run"})
     plan: dict = state.get("plan", {})
-    if not plan:
+    canplan: dict = state.get("canplan", {})
+    effective_plan = canplan if canplan else plan
+    if not effective_plan:
         emit("node_exit", node_id=6, status="failed", duration_ms=0)
         update_state(nodes_status={"gtm_creation": "failed"})
         return {**state, "error": "설계안이 없습니다."}
-
-    # Plan 자동 보정: 누락 트리거 생성 + 잘못된 firing_trigger_names 수정
-    plan = _fix_plan(plan, state.get("captured_events", []))
+    strict_mode = os.environ.get("STRICT_CANPLAN", "0").lower() in ("1", "true", "yes")
 
     client = GTMClient(
         account_id=state.get("account_id", ""),
@@ -190,30 +192,72 @@ async def gtm_creation(state: GTMAgentState) -> GTMAgentState:
                             "error": "Workspace 생성 실패: Rate Limit 초과 + 재사용 가능한 Workspace 없음",
                         }
 
+        use_canplan = isinstance(effective_plan, dict) and effective_plan.get("version") == "canplan/1"
+
+        if use_canplan:
+            variables, triggers, tags = build_specs_from_canplan(effective_plan)
+        else:
+            if strict_mode:
+                raise RuntimeError("STRICT_CANPLAN=1 이지만 CanPlan이 없어 레거시 경로를 차단했습니다.")
+            # 레거시 호환 경로: 기존 plan 보정 후 빌드 (공식 경로는 CanPlan, 향후 제거 예정).
+            logger.warning(
+                "[GTMCreation] 레거시 경로 사용 중 — STRICT_CANPLAN=1 설정을 권장합니다. "
+                "(레거시 경로는 Phase 5에서 제거될 예정)"
+            )
+            emit(
+                "thought",
+                who="agent",
+                label="GTM Creation",
+                text=(
+                    "⚠ 레거시 DraftPlan 경로로 리소스를 생성합니다. 다음 실행부터는 "
+                    "STRICT_CANPLAN=1 로 CanPlan 전환을 권장합니다."
+                ),
+                kind="plain",
+            )
+            _reject_in_set_in_legacy(plan)
+            compat_plan = _fix_plan(plan, state.get("captured_events", []))
+            variables = []
+            for var_spec in compat_plan.get("variables", []):
+                variable = _build_variable(var_spec)
+                if variable is not None:
+                    variables.append(variable)
+            triggers = [_build_trigger(trig_spec) for trig_spec in compat_plan.get("triggers", [])]
+            tags = []
+            for tag_spec in compat_plan.get("tags", []):
+                firing_names = tag_spec.get("firing_trigger_names", [])
+                tags.append((tag_spec, firing_names))
+
         # 1. Variable 생성
-        for var_spec in plan.get("variables", []):
-            variable = _build_variable(var_spec)
+        for variable in variables:
             result = client.create_or_update_variable(workspace_id, variable)
             created_variables.append(result)
 
         # 2. Trigger 생성 (이름 → ID 매핑 저장)
-        for trig_spec in plan.get("triggers", []):
-            trigger = _build_trigger(trig_spec)
+        for trigger in triggers:
             result = client.create_or_update_trigger(workspace_id, trigger)
             created_triggers.append(result)
             trigger_name_to_id[result["name"]] = result["triggerId"]
 
-        # 3. Tag 생성 (firing_trigger_names → IDs로 변환)
-        for tag_spec in plan.get("tags", []):
-            firing_names = tag_spec.get("firing_trigger_names", [])
-            firing_ids = [
-                trigger_name_to_id[name]
-                for name in firing_names
-                if name in trigger_name_to_id
-            ]
-            tag = _build_tag(tag_spec, firing_ids)
-            result = client.create_or_update_tag(workspace_id, tag)
-            created_tags.append(result)
+        # 3. Tag 생성 (firing trigger 이름을 실제 ID로 치환)
+        if use_canplan:
+            for tag in tags:
+                tag.firing_trigger_ids = [
+                    trigger_name_to_id.get(name, "")
+                    for name in tag.firing_trigger_ids
+                    if trigger_name_to_id.get(name)
+                ]
+                result = client.create_or_update_tag(workspace_id, tag)
+                created_tags.append(result)
+        else:
+            for tag_spec, firing_names in tags:
+                firing_ids = [
+                    trigger_name_to_id[name]
+                    for name in firing_names
+                    if name in trigger_name_to_id
+                ]
+                tag = _build_tag(tag_spec, firing_ids)
+                result = client.create_or_update_tag(workspace_id, tag)
+                created_tags.append(result)
 
     except Exception as e:
         error_msg = f"GTM 리소스 생성 중 오류: {e}"
@@ -273,17 +317,27 @@ _VARIABLE_TYPE_MAP = {
 }
 
 
-def _build_variable(spec: dict) -> GTMVariable:
+def _build_variable(spec: dict) -> GTMVariable | None:
+    """설계안 1건을 GTM 리소스로 변환.
+
+    - ``type: "d"`` (DOM Element) 는 공식 스펙상 ``elementId``(HTML id) 기반만 지원.
+      CSS selector가 필요한 케이스는 ``gtm.dom_variable.normalize_dom_element_parameters``
+      가 자동으로 ``type: "jsm"`` (Custom JavaScript) 변수로 변환한 튜플을 돌려준다.
+    - 정규화 불가(예: CSS selector도 id도 비어있음)면 ``None`` — 상위에서 드롭.
+    """
     raw_type = spec["type"]
     var_type = _VARIABLE_TYPE_MAP.get(raw_type, raw_type)
     raw_params = spec.get("parameters", [])
 
     if var_type == "d":
-        try:
-            normalized = normalize_dom_element_parameters(raw_params)
-        except ValueError as e:
-            raise ValueError(f"변수 '{spec.get('name', '?')}': {e}") from e
-        param_dicts = normalized
+        normalized = normalize_dom_element_parameters(raw_params)
+        if normalized is None:
+            print(
+                f"[GTMCreation] DOM 변수 '{spec.get('name', '?')}' 드롭: "
+                "elementId/CSS selector 값이 비어 정규화 불가"
+            )
+            return None
+        var_type, param_dicts = normalized
     else:
         param_dicts = raw_params
 
@@ -301,6 +355,22 @@ def _build_variable(spec: dict) -> GTMVariable:
 
 
 _INTERNAL_EVENTS = {"gtm.js", "gtm.dom", "gtm.load"}
+
+
+def _reject_in_set_in_legacy(plan: dict) -> None:
+    """레거시 경로에서는 `in_set` / canplan-only op가 섞여 들어오면 즉시 차단(§Phase 3).
+
+    CanPlan 정규화가 비활성화(STRICT_CANPLAN=0)된 경로에서 LLM이 canplan 스타일 op를
+    섞어 보내는 경우를 잡는다. 발견 시 RuntimeError를 던져 파이프라인을 멈춘다.
+    """
+    for trig in plan.get("triggers", []) or []:
+        if trig.get("kind") and trig.get("conditions"):
+            for cond in trig.get("conditions", []):
+                if cond.get("op") == "in_set":
+                    raise RuntimeError(
+                        f"레거시 경로에서 in_set op는 허용되지 않습니다: {trig.get('name')}. "
+                        "STRICT_CANPLAN=1 로 CanPlan 경로를 사용하세요."
+                    )
 
 
 def _fix_plan(plan: dict, captured_events: list[dict]) -> dict:

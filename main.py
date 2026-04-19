@@ -45,10 +45,23 @@ async def main() -> None:
         return
 
     user_request = _sanitize(
-        input("요청 사항을 입력하세요 (예: GA4 이커머스 이벤트 전체 설정): ").strip()
+        input("요청 메모 (자유 텍스트, 예: GA4 이커머스): ").strip()
     )
     if not user_request:
-        user_request = "GA4 이커머스 이벤트 전체 설정"
+        user_request = "GA4 이커머스 이벤트 설정"
+
+    # 설치할 이벤트: 쉼표로 구분된 이벤트명 목록 (UI 체크박스와 동등)
+    events_raw = _sanitize(
+        input(
+            "설치할 이벤트 (쉼표 구분, 비우면 기본값: "
+            "view_item,add_to_cart,add_to_wishlist,begin_checkout): "
+        ).strip()
+    )
+    selected_events = [
+        e.strip().lower()
+        for e in events_raw.split(",")
+        if e.strip()
+    ] or ["view_item", "add_to_cart", "add_to_wishlist", "begin_checkout"]
 
     tag_type_input = _sanitize(
         input("태그 유형 (GA4/naver/kakao, 기본값 GA4): ").strip()
@@ -80,6 +93,7 @@ async def main() -> None:
         "container_id": container_id,
         "workspace_id": workspace_id,
         "measurement_id": measurement_id,
+        "selected_events": selected_events,
     }
 
     print("\nAgent 실행 시작...\n")

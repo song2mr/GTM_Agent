@@ -99,7 +99,7 @@ UI의 `useRunLog` 훅이 1.5초마다 폴링해 증분 읽기.
 | `node_exit` | 노드 종료 | `node_id`, `status`, `duration_ms` |
 | `thought` | LLM 사고·툴 실행 | `who`, `label`, `text`, `kind` |
 | `datalayer_event` | dataLayer 캡처 | `event`, `url`, `source`, `params` |
-| `hitl_request` | HITL 대기 시작 | `plan` |
+| `hitl_request` | HITL 대기 시작 | `kind`, 그리고 kind별 payload (아래 표 참고) |
 | `hitl_decision` | HITL 결정 | `approved`, `feedback` |
 | `gtm_created` | GTM 리소스 생성 | `kind`, `name`, `operation` |
 | `publish_result` | Publish 결과 | `success`, `version_id`, `warning` |
@@ -107,6 +107,21 @@ UI의 `useRunLog` 훅이 1.5초마다 폴링해 증분 읽기.
 
 `thought` 이벤트의 `kind`: `"plain"` | `"tool"` | `"highlight"`
 `thought` 이벤트의 `who`: `"agent"` | `"tool"` | `"user"`
+
+### `hitl_request` payload by kind
+
+| kind | payload | 생성 위치 |
+|------|---------|-----------|
+| `"plan"` (또는 없음) | `plan`, `normalize_errors`, `canplan_hash` | `agent/nodes/planning.py` |
+| `"workspace_full"` | `workspaces`, `current_count`, `limit`, `default_reuse_id`, `message` | `agent/runner.py`(사전) / `agent/nodes/gtm_creation.py`(노드 6) |
+
+`hitl_decision` 이벤트는 `{approved: bool, feedback: str}` 공통. UI/서버 측은 `kind`로 카드 매칭을 처리한다(`ui/CLAUDE.md` 참고).
+
+### CanPlan 산출물 (`logs/{run_id}/`)
+
+- `plan.json` — HITL 화면에 표시되는 **레거시 plan 표현**. Planning이 HITL 진입 직전 `write_plan`으로 저장.
+- `events.jsonl`의 `hitl_request(kind="plan")` payload에는 `canplan_hash`가 포함돼, UI와 Reporter가 동일 해시로 plan 동치를 대조한다.
+- Reporter(Node 8)는 `state["canplan_hash"]`와 `summarize_issues(state["normalize_errors"])`를 보고서 "특이사항" 섹션에 포함한다.
 
 ### update_state(**fields)
 

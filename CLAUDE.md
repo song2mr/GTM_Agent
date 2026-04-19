@@ -19,28 +19,44 @@ GTM Variable / Trigger / Tag를 자동 생성 후 Publish하는 LangGraph 멀티
 
 ```
 gtm_ai/
-├── CLAUDE.md                  ← 지금 이 파일: 개요 + 가이드만
+├── CLAUDE.md                       ← 지금 이 파일: 개요 + 가이드만
 ├── agent/
-│   ├── CLAUDE.md              ← StateGraph 토폴로지, 라우팅, State 설계
+│   ├── CLAUDE.md                   ← StateGraph 토폴로지, 라우팅, State 설계
+│   ├── canplan/
+│   │   └── CLAUDE.md               ← CanPlan 스키마·정규화·EvidencePack·CJS 템플릿
+│   ├── playbooks/
+│   │   └── CLAUDE.md               ← 이벤트별 Playbook(YAML) 계약·loader
 │   └── nodes/
-│       └── CLAUDE.md          ← 각 Node의 역할·입력·출력·핵심 로직
+│       └── CLAUDE.md               ← 각 Node의 역할·입력·출력·핵심 로직
 ├── browser/
-│   └── CLAUDE.md              ← Playwright 원칙, listener 주입, navigator 루프
+│   └── CLAUDE.md                   ← Playwright 원칙, listener 주입, navigator 루프
 ├── gtm/
-│   └── CLAUDE.md              ← GTM API 클라이언트, 모델, 인증, 네이밍
+│   └── CLAUDE.md                   ← GTM API 클라이언트, 모델, 인증, 네이밍, spec_builder
 ├── utils/
-│   └── CLAUDE.md              ← ui_emitter 사용법, token_tracker 사용법
+│   └── CLAUDE.md                   ← ui_emitter 사용법, token_tracker 사용법
 ├── docs/
-│   └── CLAUDE.md              ← 문서 fetch 전략, 폴백 처리
+│   ├── CLAUDE.md                   ← 문서 fetch 전략, 폴백 처리
+│   ├── VARIABLE_PIPELINE_REDESIGN.md  ← CanPlan 파이프라인 재설계 기준 문서(정규화 규칙, §16 진행 상태)
+│   └── gtm-variable-api.md
 ├── config/
-│   ├── CLAUDE.md              ← media_sources, exploration_limits, llm_models 등 설정
-│   ├── exploration_limits.yaml  ← 전용 탐색 노드 LLM 스텝 상한
+│   ├── CLAUDE.md                   ← media_sources, exploration_limits, llm_models 등 설정
+│   ├── exploration_limits.yaml     ← 전용 탐색 노드 LLM 스텝 상한
 │   ├── exploration_limits_loader.py
-│   ├── llm_models.yaml          ← 구역(zone)별 OpenAI 채팅 모델 ID
+│   ├── llm_models.yaml             ← 구역(zone)별 OpenAI 채팅 모델 ID
 │   └── llm_models_loader.py
+├── tests/
+│   └── CLAUDE.md                   ← 테스트 실행 방식(pytest 없이 직접 실행), 골든 케이스
 └── ui/
-    └── CLAUDE.md              ← UI 아키텍처, 훅, 화면 구성, 데이터 흐름
+    └── CLAUDE.md                   ← UI 아키텍처, 훅, 화면 구성, 데이터 흐름
 ```
+
+### 신규/변경 요약 (2026-04)
+
+- `agent/canplan/` — CanPlan(`canplan/1`) 스키마·Draft→Canonical 정규화·EvidencePack 합성·CJS 템플릿 레지스트리.
+- `agent/playbooks/` — GA4 이커머스 이벤트별 `surface_goal`·`entry_hints`·`observation`·`trigger_fallbacks` YAML과 loader.
+- `gtm/spec_builder.py` — CanPlan → GTM API 스펙 직렬화(레거시 `_fix_plan`/`_build_*` 경로와 분리).
+- `docs/VARIABLE_PIPELINE_REDESIGN.md` — 파이프라인 재설계 설계 문서(§16 구현 진행 상태 포함).
+- `tests/` — `spec_builder`·CanPlan 정규화 골든 테스트(외부 pytest 의존 없이 `_run()`으로 직접 실행).
 
 ---
 
@@ -106,3 +122,6 @@ Playwright 창: `serve_ui` / 노드 공통으로 `GTM_AI_HEADLESS`가 `1|true|ye
 - **Navigator 스텝 상한은 `config/exploration_limits.yaml`에서 로드**한다(`navigator` / `cart_addition` / `begin_checkout`).
 - **노드·Navigator별 LLM 모델 ID는 `config/llm_models.yaml`**에서 로드한다(`config.llm_models_loader.llm_model`). Navigator 생성자에 `model=`을 넘기면 YAML보다 우선한다.
 - **사용자 대면이 아닌 로그는 `utils.logger`만 사용**한다(`print()` 금지). CLI HITL 프롬프트처럼 사용자가 직접 읽어야 하는 출력만 `print` 허용.
+- **LLM 자유 JS 금지**: Custom JavaScript 변수는 `agent/canplan/cjs_templates.py`의 등록된 `template_id`만 허용한다. 자유 작성 CJS는 `normalize.py`가 `POLICY_VIOLATION`으로 반려한다.
+- **in_set 연산자 금지**: CanPlan 필터 조건에서 `in_set`은 쓰지 않는다(정규화에서 거부, 레거시 경로에서도 `gtm_creation._reject_in_set_in_legacy`가 차단). 실제 의도가 multi-match면 regex/여러 조건으로 분해한다.
+- **CanPlan 경로 토글**: `STRICT_CANPLAN=1`이면 정규화 실패 시 LLM 1회 재시도 후 실패 처리하고 레거시 경로로 폴백하지 않는다. 기본(0)은 경고 + 레거시 허용.

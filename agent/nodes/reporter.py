@@ -99,6 +99,7 @@ async def reporter(state: GTMAgentState) -> GTMAgentState:
 def _build_report(state: GTMAgentState, usage: dict | None = None) -> str:
     sections: list[str] = [
         _section_header(state),
+        _section_canplan(state),
         _section_datalayer_analysis(state),
         _section_event_table(state),
         _section_notable_cases(state),
@@ -118,13 +119,29 @@ def _build_report(state: GTMAgentState, usage: dict | None = None) -> str:
 
 def _section_header(state: GTMAgentState) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    selected = state.get("selected_events") or []
+    if selected:
+        req_scope = ", ".join(selected)
+        scope_src = "UI 선택(selected_events)"
+    else:
+        # CLI/레거시: 괄호 파서 결과가 있으면 표시
+        from agent.request_events import parse_parenthesized_event_list
+        parsed = parse_parenthesized_event_list(state.get("user_request", "") or "")
+        if parsed:
+            req_scope = ", ".join(parsed)
+            scope_src = "요청 괄호 목록"
+        else:
+            req_scope = "(명시 목록 없음 — LLM 큐 자동 제안)"
+            scope_src = "LLM 폴백"
     return f"""# GTM AI Agent 실행 보고서
 
 | 항목 | 값 |
 |------|-----|
 | 실행 일시 | {now} |
 | 대상 URL | {state.get("target_url", "-")} |
-| 사용자 요청 | {state.get("user_request", "-")} |
+| 요청 메모(user_request) | {state.get("user_request", "-")} |
+| **요청 이벤트(scope)** | {req_scope} |
+| 스코프 근거 | {scope_src} |
 | 태그 유형 | {state.get("tag_type", "GA4")} |
 | 페이지 타입 | {state.get("page_type", "-")} |"""
 
@@ -166,6 +183,22 @@ def _section_datalayer_analysis(state: GTMAgentState) -> str:
 | **최종 추출 방식** | **{method_label}** |
 
 **추출 방식 결정 경위:** {decision_reason}"""
+
+
+def _section_canplan(state: GTMAgentState) -> str:
+    canplan = state.get("canplan") or {}
+    if not canplan:
+        return "## 1.5 CanPlan\n\nCanPlan이 생성되지 않아 레거시 설계 경로를 사용했습니다."
+    normalize_errors = state.get("normalize_errors") or []
+    err_n = sum(1 for e in normalize_errors if e.get("severity") == "error")
+    warn_n = sum(1 for e in normalize_errors if e.get("severity") == "warning")
+    return (
+        "## 1.5 CanPlan\n\n"
+        f"- canplan_hash: `{state.get('canplan_hash', '')}`\n"
+        f"- variables/triggers/tags: {len(canplan.get('variables', []))}/"
+        f"{len(canplan.get('triggers', []))}/{len(canplan.get('tags', []))}\n"
+        f"- normalize 결과: error {err_n}건, warning {warn_n}건"
+    )
 
 
 def _explain_extraction_decision(dl_status: str, extraction_method: str) -> str:

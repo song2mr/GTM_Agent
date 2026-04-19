@@ -65,6 +65,24 @@ def _url_looks_like_plp(url: str) -> bool:
     return any(m in u for m in _PLP_URL_MARKERS)
 
 
+def _surface_goal_reached_for_prompt(url: str, goal: str) -> bool:
+    u = (url or "").lower()
+    g = (goal or "").lower()
+    if g in ("", "unknown", "current"):
+        return True
+    if g == "pdp":
+        return ("/product/" in u) or ("goods_view" in u) or ("product_no=" in u)
+    if g == "plp":
+        return ("/category/" in u) or ("goods_list" in u) or ("catecd=" in u)
+    if g == "cart":
+        return "/cart" in u or "/basket" in u
+    if g == "checkout":
+        return "/checkout" in u or "/order" in u
+    if g == "home":
+        return u.endswith("/") or "://" in u and u.split("://", 1)[-1].count("/") <= 1
+    return True
+
+
 def _primary_click_selector(raw: str | None) -> str:
     """Playwright `click`은 단일 셀렉터만 유효. LLM이 쉼표로 나열하면 첫 항목만 사용."""
     s = (raw or "").strip()
@@ -298,6 +316,7 @@ class LLMNavigator:
         captured_so_far: list[dict],
         step: int,
         action_history: list[dict],
+        playbook: dict | None = None,
     ) -> dict:
         """현재 페이지 상태와 액션 히스토리를 분석하고 다음 액션을 결정합니다."""
         logger.info(
@@ -318,6 +337,7 @@ class LLMNavigator:
         prefer_bottom = sk == "interaction"
         snap_max = 24000 if prefer_bottom else 18000
         t_snap = time.perf_counter()
+        snapshot = ""
         try:
             snapshot = await get_page_snapshot(
                 page, max_chars=snap_max, prefer_bottom=prefer_bottom
@@ -329,7 +349,10 @@ class LLMNavigator:
                 "reason": f"페이지 스냅샷 실패: {e}",
             }
         snap_dt = time.perf_counter() - t_snap
-        if snapshot.startswith(("스냅샷 타임아웃", "스냅샷 실패", "스냅샷 가공 실패")):
+        snapshot_failed = snapshot.startswith(
+            ("스냅샷 타임아웃", "스냅샷 실패", "스냅샷 가공 실패")
+        )
+        if snapshot_failed:
             logger.warning(
                 f"[Navigator] 스냅샷 비정상 결과 ({snap_dt:.2f}s, len={len(snapshot)}): "
                 f"{snapshot[:200]!r}"
@@ -338,6 +361,28 @@ class LLMNavigator:
             logger.info(
                 f"[Navigator] 스냅샷 수집·가공 완료 ({snap_dt:.2f}s, len={len(snapshot)})"
             )
+        # §Phase 1b: 스냅샷 실패/빈약 시 ¼씩 스크롤 후 재시도 2회 한도.
+        if snapshot_failed or len(snapshot) < 1500:
+            for attempt in range(2):
+                try:
+                    await page.evaluate(
+                        "window.scrollBy(0, Math.floor(document.body.scrollHeight/4))"
+                    )
+                    await page.wait_for_timeout(500)
+                    retried = await get_page_snapshot(
+                        page, max_chars=snap_max, prefer_bottom=prefer_bottom
+                    )
+                except Exception as e:
+                    logger.debug(f"[Navigator] chunked retry {attempt+1} 실패: {e}")
+                    break
+                if not retried.startswith(
+                    ("스냅샷 타임아웃", "스냅샷 실패", "스냅샷 가공 실패")
+                ) and len(retried) >= 1500:
+                    logger.info(
+                        f"[Navigator] 스냅샷 chunked retry {attempt+1} 성공 len={len(retried)}"
+                    )
+                    snapshot = retried
+                    break
         captured_names = [e.get("data", {}).get("event", "") for e in captured_so_far]
 
         event_guide = EVENT_CAPTURE_GUIDE.get(target_event, "")
@@ -369,6 +414,15 @@ class LLMNavigator:
             history_text = "지금까지 실행한 액션 (이번 이벤트 포함 세션 전체):\n" + "\n".join(lines)
 
         strategy_banner = _strategy_user_banner(target_event)
+        playbook = playbook or {}
+        surface_goal = str(playbook.get("surface_goal", "unknown"))
+        trigger_fallbacks = list(playbook.get("trigger_fallbacks") or [])
+        playbook_block = (
+            f"[Playbook]\n"
+            f"- surface_goal: {surface_goal}\n"
+            f"- trigger_fallbacks: {trigger_fallbacks}\n"
+            f"- surface_goal_reached: {_surface_goal_reached_for_prompt(page.url, surface_goal)}\n"
+        )
 
         budget_hints: list[str] = []
         if target_event == "view_item_list":
@@ -424,6 +478,7 @@ class LLMNavigator:
 (click: CSS 하나만, 쉼표 금지. 숨김 `<select>` 옵션은 **select_option** + value 사용.)
 {history_text}
 {budget_block}
+{playbook_block}
 {dl_block}페이지 HTML (축약):
 {snapshot}
 """
@@ -486,6 +541,7 @@ class LLMNavigator:
         page: Page,
         target_event: str,
         captured_so_far: list[dict],
+        playbook: dict | None = None,
     ) -> Literal["captured", "manual_required", "skipped"]:
         """목표 이벤트 캡처를 시도합니다. 최대 MAX_STEPS 스텝."""
         t_run = time.perf_counter()
@@ -506,7 +562,7 @@ class LLMNavigator:
                 f"step={step}/{MAX_STEPS} url={page.url!r}"
             )
             decision = await self.decide_next_action(
-                page, target_event, captured_so_far, step, self._action_history
+                page, target_event, captured_so_far, step, self._action_history, playbook=playbook
             )
             action = decision.get("action", "impossible")
 

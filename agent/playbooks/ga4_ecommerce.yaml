@@ -1,0 +1,170 @@
+# GA4 이커머스 이벤트별 Playbook (§6.5.1~§6.5.2)
+#
+# 필드 정의:
+# - surface_goal: 진입 목표 표면(page_type). 없으면 "current".
+# - entry_hints.url_patterns: 관측/이동용 URL 정규식 또는 substring 힌트.
+# - entry_hints.click_hints: LLMNavigator가 선호할 클릭 대상 셀렉터/텍스트.
+# - entry_hints.from_surfaces: 어느 표면에서 진입 가능한가.
+# - observation.datalayer_events: 캡처를 노릴 GA4 이벤트 이름.
+# - observation.required_fields: DL/DOM에서 확보해야 할 필수 필드.
+# - observation.optional_fields: 있으면 좋은 필드.
+# - observation.settle_ms: 진입 후 DL 발화 대기(ms).
+# - trigger_fallbacks: CanPlan이 허용하는 트리거 폴백 순서.
+
+version: 1
+
+events:
+  page_view:
+    surface_goal: current
+    entry_hints:
+      url_patterns: []
+      from_surfaces: ["home", "pdp", "plp", "cart", "checkout"]
+    observation:
+      datalayer_events: ["page_view", "gtm.js", "gtm.dom"]
+      required_fields: []
+      optional_fields: []
+      settle_ms: 800
+    trigger_fallbacks: ["pageview", "custom_event"]
+
+  view_item_list:
+    surface_goal: plp
+    entry_hints:
+      url_patterns: ["^/category/[^/]+/?$", "^/products/?", "/list", "/c/"]
+      click_hints: ["a[href*='category']", "nav a", "카테고리"]
+      from_surfaces: ["home", "plp"]
+    observation:
+      datalayer_events: ["view_item_list"]
+      required_fields: ["item_name"]
+      optional_fields: ["item_id", "item_list_name"]
+      settle_ms: 1200
+    trigger_fallbacks: ["custom_event", "pageview", "history_change"]
+
+  select_item:
+    surface_goal: plp
+    entry_hints:
+      url_patterns: ["^/category/[^/]+/?$", "/list"]
+      click_hints: ["a[href*='product']", ".product-card", "상품카드"]
+      from_surfaces: ["plp"]
+    observation:
+      datalayer_events: ["select_item"]
+      required_fields: ["item_id"]
+      optional_fields: ["item_name", "item_list_name"]
+      settle_ms: 800
+    trigger_fallbacks: ["custom_event", "click"]
+
+  view_item:
+    surface_goal: pdp
+    entry_hints:
+      url_patterns: ["^/product/[^/]+/?$", "/goods/", "/p/", "/detail/"]
+      click_hints: ["상품 카드", "product card", "a[href*='product']"]
+      from_surfaces: ["plp", "home"]
+    observation:
+      datalayer_events: ["view_item"]
+      required_fields: ["item_name", "item_id", "price"]
+      optional_fields: ["currency", "item_brand", "item_category"]
+      settle_ms: 1500
+    trigger_fallbacks: ["custom_event", "pageview", "history_change"]
+
+  add_to_wishlist:
+    surface_goal: pdp
+    entry_hints:
+      url_patterns: ["^/product/[^/]+/?$"]
+      click_hints: ["찜", "wishlist", "heart", "button[class*='wish']"]
+      from_surfaces: ["pdp", "plp"]
+    observation:
+      datalayer_events: ["add_to_wishlist"]
+      required_fields: ["item_id"]
+      optional_fields: ["item_name", "price"]
+      settle_ms: 800
+    trigger_fallbacks: ["custom_event", "click"]
+
+  add_to_cart:
+    surface_goal: pdp
+    entry_hints:
+      url_patterns: ["^/product/[^/]+/?$", "/goods/", "/p/"]
+      click_hints: ["장바구니", "담기", "add to cart", "button[class*='cart']"]
+      from_surfaces: ["pdp"]
+    observation:
+      datalayer_events: ["add_to_cart"]
+      required_fields: ["item_id", "quantity"]
+      optional_fields: ["price", "item_name", "currency"]
+      settle_ms: 1500
+    trigger_fallbacks: ["custom_event", "click"]
+
+  view_cart:
+    surface_goal: cart
+    entry_hints:
+      url_patterns: ["^/cart/?$", "/bag", "/basket"]
+      click_hints: ["장바구니 보기", "cart", "a[href*='cart']"]
+      from_surfaces: ["home", "pdp"]
+    observation:
+      datalayer_events: ["view_cart"]
+      required_fields: ["items"]
+      optional_fields: ["value", "currency"]
+      settle_ms: 1200
+    trigger_fallbacks: ["custom_event", "pageview"]
+
+  remove_from_cart:
+    surface_goal: cart
+    entry_hints:
+      url_patterns: ["^/cart/?$"]
+      click_hints: ["삭제", "remove", "button[class*='remove']", "button[class*='delete']"]
+      from_surfaces: ["cart"]
+    observation:
+      datalayer_events: ["remove_from_cart"]
+      required_fields: ["item_id"]
+      optional_fields: ["items"]
+      settle_ms: 800
+    trigger_fallbacks: ["custom_event", "click"]
+
+  begin_checkout:
+    surface_goal: checkout
+    entry_hints:
+      url_patterns: ["^/checkout/?", "^/order/?", "/pay"]
+      click_hints: ["주문", "구매", "checkout", "button[class*='checkout']"]
+      from_surfaces: ["cart", "pdp"]
+    observation:
+      datalayer_events: ["begin_checkout"]
+      required_fields: ["items"]
+      optional_fields: ["value", "currency"]
+      settle_ms: 1500
+    trigger_fallbacks: ["custom_event", "pageview"]
+
+  add_shipping_info:
+    surface_goal: checkout
+    entry_hints:
+      url_patterns: ["^/checkout/?", "^/order/?"]
+      click_hints: ["배송지", "shipping"]
+      from_surfaces: ["checkout"]
+    observation:
+      datalayer_events: ["add_shipping_info"]
+      required_fields: []
+      optional_fields: ["items", "value"]
+      settle_ms: 1000
+    trigger_fallbacks: ["custom_event", "form_submit"]
+
+  add_payment_info:
+    surface_goal: checkout
+    entry_hints:
+      url_patterns: ["^/checkout/?", "^/order/?"]
+      click_hints: ["결제수단", "payment"]
+      from_surfaces: ["checkout"]
+    observation:
+      datalayer_events: ["add_payment_info"]
+      required_fields: []
+      optional_fields: ["items", "value"]
+      settle_ms: 1000
+    trigger_fallbacks: ["custom_event", "form_submit"]
+
+  view_promotion:
+    surface_goal: home
+    entry_hints:
+      url_patterns: ["^/$", "^/home/?"]
+      click_hints: ["배너", "promotion", "banner"]
+      from_surfaces: ["home", "plp"]
+    observation:
+      datalayer_events: ["view_promotion"]
+      required_fields: []
+      optional_fields: ["promotion_id", "promotion_name"]
+      settle_ms: 1000
+    trigger_fallbacks: ["custom_event", "element_visibility"]
